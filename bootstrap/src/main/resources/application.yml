@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: channel-link
+  datasource:
+    url: jdbc:h2:mem:channel-link;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  main:
+    web-application-type: servlet
+
+channel-link:
+  supplier:
+    a:
+      base-url: http://localhost:9090
+    b:
+      base-url: http://localhost:9090

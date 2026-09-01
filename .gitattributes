@@ -1,0 +1,12 @@
+# 저장소 기본값: 텍스트 파일은 LF로 정규화해서 커밋한다.
+# 작업 트리에서도 LF로 체크아웃되므로 OS가 섞여도 diff가 지저분해지지 않는다.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.jar binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.pdf binary
