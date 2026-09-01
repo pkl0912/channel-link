@@ -21,18 +21,18 @@
 **2. 헥사고날 아키텍처**
 - 대안: Controller-Service-Repository 3계층 / 헥사고날(Port & Adapter)
 - 결정: 헥사고날
-- 이유: 과제 요구사항 자체가 "Supplier별 요청/응답 형식이 도메인 계층으로 새어 나가지 않도록 경계를 두라"인데, 이게 Port·Adapter 패턴의 정의와 정확히 일치한다. 신규 Supplier를 추가할 때 Adapter 하나만 새로 작성하면 된다.
+- 이유: Supplier별 요청/응답 형식이 도메인 계층으로 새어 나가지 않도록 경계를 두어야 하는데, 이게 Port·Adapter 패턴의 정의와 정확히 일치한다. 신규 Supplier를 추가할 때 Adapter 하나만 새로 작성하면 된다.
 
 **3. 표준 모델과 영속 대상 분리**
 - 대안: 공급사 응답을 그대로 캐싱하는 별도 테이블(RoomType 캐시)을 둘지 / 매핑 테이블만 영속할지
 - 결정: 매핑(`HotelMapping`/`RoomTypeMapping`)만 영속. `Hotel`/`RoomType`/`DailyInventory`/`StayOffer`는 검색·갱신 요청마다 라이브로 다시 조립하는 값 객체로 두고 DB에 저장하지 않음
-- 이유: `roomTypeName`/`maxOccupancy` 같은 필드는 재고와 요금 조회 응답에도 매번 포함돼 있어서, 별도로 캐싱해도 어차피 매번 다시 받아오는 값의 사본일 뿐이다. 또한, 요금과 재고의 원본은 외부에 있으므로 쌓아둘 필요가 없다고 명시하고 있어 매핑 외에는 영속하지 않는 쪽으로 판단
+- 이유: `roomTypeName`/`maxOccupancy` 같은 필드는 재고와 요금 조회 응답에도 매번 포함돼 있어서, 별도로 캐싱해도 어차피 매번 다시 받아오는 값의 사본일 뿐이다. 또한, 요금과 재고의 원본은 외부에 있으므로 쌓아둘 필요가 없어 매핑 외에는 영속하지 않는 쪽으로 판단
 - 포기한 것: 조회 성능 최적화— 필요해지면 선택 구현으로 나중에 추가 가능
 
 **4. `breakfastIncluded`/`currency`의 위치**
 - 대안: 방의 정적 속성(`RoomType`)에 둘지 / 요금의 속성(`StayOffer`)에 둘지
 - 결정: `StayOffer`
-- 이유: 요금에 조식이 포함되는지는 같은 객실이라도 공급사마다다를 수 있다"고 명시돼 있다. 방 자체의 고정 속성이 아니라 가격에 딸린 조건이라고 판단
+- 이유: 요금에 조식이 포함되는지는 같은 객실이라도 공급사마다 다를 수 있다. 방 자체의 고정 속성이 아니라 가격에 딸린 조건이라고 판단
 
 ### 참고 자료
 - [Hexagonal Architecture with Java and Spring](https://reflectoring.io/spring-hexagonal/)
