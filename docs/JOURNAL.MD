@@ -36,3 +36,39 @@
 
 ### 참고 자료
 - [Hexagonal Architecture with Java and Spring](https://reflectoring.io/spring-hexagonal/)
+
+## Day 2 - Supplier 연동 어댑터 (레지스트리 패턴)
+
+### 수행 내용
+- `domain`에 `SupplierClient` Port 추가 — `fetchHotelCatalog()`, `searchAvailability(hotelCodes, criteria)` 두 메서드로 정의, `SearchCriteria` 공통 규약 작성
+- `SupplierAClient`/`SupplierBClient` 구현 — WebClient로 mock-supplier 실제 호출, 각자 원본 응답을 표준 모델(`Hotel`/`RoomType`/`DailyInventory`/`StayOffer`)로 정규화
+- `SupplierClientRegistry` 구현 — Map 기반 레지스트리 패턴
+- 내부 식별자(`internalHotelId`, `internalRoomTypeId`) 생성 방식을 `UUID.randomUUID()`(v4)에서 UUIDv7로 교체 — `adapter-out-persistence`에 직접 구현
+
+### 의사결정
+
+**1. 실패를 하나의 예외로 통일**
+- 대안: 각 어댑터가 자기 방식대로 예외를 던지게 둘지 / 공통 예외 타입을 Port 계약에 포함시킬지
+- 결정: `SupplierCallException` 하나로 통일
+- 이유: Supplier A는 HTTP 4xx/5xx로, Supplier B는 HTTP 200 + `resultCode`. B는 `resultCode != "0000"`이면 어댑터가 직접 확인해서 예외를 던지게 만들었다 
+
+**2. 신규 Supplier 추가를 대비해 레지스트리 패턴 사용**
+- 대안: `SupplierCode`별로 if/else나 switch로 분기해서 알맞은 어댑터를 고르게 할지 / 구현체를 Map에 등록해두고 꺼내 쓰는 레지스트리로 만들지
+- 결정: `SupplierClientRegistry`로 레지스트리 패턴 적용
+- 이유: if/else 방식이면 Supplier가 하나 늘 때마다 분기 코드를 계속 고쳐야 한다(OCP 위반). 반면, 레지스트리는 신규 Supplier를 추가할 때는 어댑터 클래스 하나를 `@Component`로 새로 작성하기만 하면 된다.
+
+**3. 제네릭 봉투(`EnvelopeB<T>`) 역직렬화에 `ParameterizedTypeReference` 사용**
+- 문제: Supplier B 응답은 `{resultCode, resultMessage, data}` 봉투 구조인데, `.bodyToMono(EnvelopeB.class)`처럼 `Class` 객체로 넘기면 제네릭 타입 소거 때문에 `data` 필드가 실제 타입(`PropertiesData`/`SearchData`)이 아니라 `LinkedHashMap`으로 역직렬화된다
+- 해결: `ParameterizedTypeReference<EnvelopeB<PropertiesData>>() {}` 형태의 익명 서브클래스로 제네릭 타입 정보를 런타임까지 유지. 이 트릭은 호출 시점에 타입 파라미터가 고정돼 있어야 해서, `PropertiesData`용/`SearchData`용 메서드를 각각 따로 둠
+
+**4. 내부 식별자를 UUIDv4 대신 UUIDv7로, 그리고 domain이 아니라 adapter-out-persistence에 배치**
+- 대안: 랜덤 UUID(v4) 계속 쓸지 / 시간 정렬되는 UUIDv7로 바꿀지. 바꾼다면 이 생성 로직을 `domain`에 둘지 / `adapter-out-persistence`에 둘지, 직접 구현할지 / 라이브러리(`uuid-creator` 등)를 쓸지
+- 결정: UUIDv7로 교체, 직접 구현, `adapter-out-persistence`에 배치
+- 이유(v4 → v7): v4는 완전 무작위라 B-tree 인덱스에 무작위 위치로 꽂혀서 삽입마다 페이지 분할이 일어난다. v7은 앞 48비트가 밀리초 타임스탬프라 삽입이 시간순으로 인덱스 뒤쪽에 대체로 이어붙는 형태가 돼 인덱스 지역성이 좋다. 지금 데이터 건수로는 체감 차이가 없지만, 나중에 데이터가 늘었을 때를 대비한 선택
+- 이유(domain이 아니라 adapter-out-persistence): 이 선택의 근거(B-tree 인덱스 지역성)는 저장소의 물리적 특성 때문이지 도메인 규칙이 아니다.
+- 이유(직접 구현 vs 라이브러리): `uuid-creator` 같은 라이브러리도 있지만, ~20줄짜리 코드에 외부 의존성을 추가하는 것보다 직접 구현하고 검증하는 쪽을 택함. 
+- 포기한 것: 같은 밀리초 안에서의 엄격한 단조 증가(monotonic) 보장 — `uuid-creator`의 `getTimeOrderedEpoch()`는 카운터로 이를 보장하지만, 이건 초당 수천 건 이상 생성하는 고빈도 상황에서나 의미가 있고 지금 매핑 생성 빈도로는 불필요하다고 판단
+
+### 참고 자료
+- [Spring `ParameterizedTypeReference` Javadoc](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/ParameterizedTypeReference.html)
+- [RFC 9562 - UUID Version 7](https://www.rfc-editor.org/rfc/rfc9562.html#name-uuid-version-7)
