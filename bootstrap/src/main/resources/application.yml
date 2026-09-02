@@ -16,6 +16,7 @@ spring:
 
 channel-link:
   supplier:
+    api-key: mock-api-key
     a:
       base-url: http://localhost:9090
     b:

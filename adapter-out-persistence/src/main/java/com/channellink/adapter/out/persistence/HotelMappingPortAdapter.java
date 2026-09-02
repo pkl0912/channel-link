@@ -6,6 +6,7 @@ import com.channellink.adapter.out.persistence.entity.RoomTypeMappingJpaEntity;
 import com.channellink.adapter.out.persistence.entity.RoomTypeMappingJpaRepository;
 import com.channellink.domain.mapping.HotelMapping;
 import com.channellink.domain.mapping.RoomTypeMapping;
+import com.channellink.adapter.out.persistence.support.UuidV7;
 import com.channellink.domain.port.out.HotelMappingPort;
 import com.channellink.domain.type.SupplierCode;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -13,7 +14,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
-import java.util.UUID;
 
 import lombok.AllArgsConstructor;
 
@@ -35,7 +35,7 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
 
         try {
             HotelMappingJpaEntity saved = hotelMappingJpaRepository.save(
-                    new HotelMappingJpaEntity(UUID.randomUUID().toString(), supplierCode, hotelCode));
+                    new HotelMappingJpaEntity(UuidV7.generate().toString(), supplierCode, hotelCode));
             return toDomain(saved);
         } catch (DataIntegrityViolationException raceLost) {
             return hotelMappingJpaRepository.findBySupplierCodeAndHotelCode(supplierCode, hotelCode)
@@ -55,7 +55,7 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
 
         try {
             RoomTypeMappingJpaEntity saved = roomTypeMappingJpaRepository.save(new RoomTypeMappingJpaEntity(
-                    UUID.randomUUID().toString(), supplierCode, hotelCode, roomTypeCode));
+                    UuidV7.generate().toString(), supplierCode, hotelCode, roomTypeCode));
             return toDomain(saved);
         } catch (DataIntegrityViolationException raceLost) {
             return roomTypeMappingJpaRepository
