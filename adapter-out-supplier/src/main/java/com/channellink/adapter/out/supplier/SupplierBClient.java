@@ -6,8 +6,8 @@ import com.channellink.domain.model.Money;
 import com.channellink.domain.model.RoomType;
 import com.channellink.domain.model.SearchCriteria;
 import com.channellink.domain.model.StayOffer;
-import com.channellink.domain.port.out.SupplierCallException;
-import com.channellink.domain.port.out.SupplierClient;
+import com.channellink.domain.exception.SupplierCallException;
+import com.channellink.domain.port.out.SupplierPort;
 import com.channellink.domain.type.SupplierCode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -23,7 +23,7 @@ import java.util.List;
  * Supplier B 어댑터
  */
 @Component
-public class SupplierBClient implements SupplierClient {
+public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
     private static final String PROPERTIES_PATH = "/b/api/properties";
@@ -46,6 +46,7 @@ public class SupplierBClient implements SupplierClient {
         return SupplierCode.SUPPLIER_B;
     }
 
+    // Supplier B의 숙소 목록(①)을 조회해서 표준 모델(Hotel/RoomType)로 변환한다
     @Override
     public HotelCatalog fetchHotelCatalog() {
         PropertiesData data = callAndUnwrap(webClient.get()
@@ -66,9 +67,10 @@ public class SupplierBClient implements SupplierClient {
         return new HotelCatalog(hotels, roomTypes);
     }
 
+    // Supplier B의 재고·요금(②)을 논블로킹으로 조회한다 — HTTP 200이어도 resultCode로 실패를 판정한다
     @Override
-    public AvailabilityResult searchAvailability(List<String> hotelCodes, SearchCriteria criteria) {
-        SearchData data = callAndUnwrap(webClient.get()
+    public Mono<AvailabilityResult> searchSupplierAvailability(List<String> hotelCodes, SearchCriteria criteria) {
+        return webClient.get()
                 .uri(uriBuilder -> uriBuilder.path(SEARCH_PATH)
                         .queryParam("propertyIds", String.join(",", hotelCodes))
                         .queryParam("checkIn", criteria.checkIn())
@@ -78,8 +80,25 @@ public class SupplierBClient implements SupplierClient {
                         .build())
                 .header(API_KEY_HEADER, apiKey)
                 .retrieve()
-                .bodyToMono(searchEnvelopeType()));
+                .bodyToMono(searchEnvelopeType())
+                .switchIfEmpty(Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_B, "empty response body")))
+                // B는 장애 상황에서도 HTTP 200을 준다 — resultCode를 직접 확인해야 실패를 안다.
+                .flatMap(envelope -> SUCCESS_RESULT_CODE.equals(envelope.resultCode())
+                        ? Mono.just(toAvailabilityResult(envelope.data()))
+                        : Mono.error(new SupplierCallException(
+                                SupplierCode.SUPPLIER_B,
+                                "resultCode=" + envelope.resultCode() + " (" + envelope.resultMessage() + ")")))
+                .onErrorMap(WebClientResponseException.class, e -> new SupplierCallException(
+                        SupplierCode.SUPPLIER_B,
+                        "HTTP " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString(),
+                        e))
+                .onErrorMap(
+                        e -> !(e instanceof SupplierCallException),
+                        e -> new SupplierCallException(SupplierCode.SUPPLIER_B, "call failed: " + e.getMessage(), e));
+    }
 
+    // B의 원본 응답(이미 세금 포함된 총액)을 표준 모델로 정규화한다
+    private AvailabilityResult toAvailabilityResult(SearchData data) {
         List<DailyInventory> dailyInventories = new ArrayList<>();
         List<StayOffer> stayOffers = new ArrayList<>();
         for (RoomOfferItem item : data.items()) {
@@ -91,20 +110,21 @@ public class SupplierBClient implements SupplierClient {
                         LocalDate.parse(inventory.date()),
                         inventory.remainingRooms()));
             }
-            // totalPrice는 이미 세금 포함
+            // totalPrice는 이미 세금 포함(gross)
             stayOffers.add(new StayOffer(
                     SupplierCode.SUPPLIER_B,
                     item.propertyId(),
+                    item.propertyName(),
                     item.roomId(),
+                    item.roomName(),
+                    item.maxOccupancy(),
                     new Money(item.totalPrice(), item.currency()),
                     item.breakfastIncluded()));
         }
         return new AvailabilityResult(dailyInventories, stayOffers);
     }
 
-    /**
-     * B는 실패해도 HTTP 200을 준다 -> resultCode 직접 확인해서 예외 throw
-     */
+    // fetchHotelCatalog() 전용 — Mono를 동기로 풀고 HTTP 실패든 resultCode 실패든 SupplierCallException으로 통일한다
     private <T> T callAndUnwrap(Mono<EnvelopeB<T>> mono) {
         EnvelopeB<T> envelope;
         try {
