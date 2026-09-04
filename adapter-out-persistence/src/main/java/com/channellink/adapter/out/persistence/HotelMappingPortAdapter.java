@@ -13,6 +13,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 
 import lombok.AllArgsConstructor;
@@ -24,6 +25,7 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
     private final HotelMappingJpaRepository hotelMappingJpaRepository;
     private final RoomTypeMappingJpaRepository roomTypeMappingJpaRepository;
 
+    // 숙소 매핑을 조회하고, 없으면 내부 식별자를 발급해 저장
     @Override
     @Transactional
     public HotelMapping resolveOrCreateHotel(SupplierCode supplierCode, String hotelCode) {
@@ -44,6 +46,7 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
         }
     }
 
+    // 객실 타입 매핑을 조회하고, 없으면 내부 식별자를 발급해 저장
     @Override
     @Transactional
     public RoomTypeMapping resolveOrCreateRoomType(SupplierCode supplierCode, String hotelCode, String roomTypeCode) {
@@ -63,6 +66,12 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
                     .map(this::toDomain)
                     .orElseThrow(() -> raceLost);
         }
+    }
+
+    // 이 공급사의 숙소 매핑을 DB에서 전부 조회
+    @Override
+    public List<HotelMapping> findAllHotelMappingBySupplier(SupplierCode supplierCode) {
+        return hotelMappingJpaRepository.findAllBySupplierCode(supplierCode).stream().map(this::toDomain).toList();
     }
 
     private HotelMapping toDomain(HotelMappingJpaEntity entity) {

@@ -1,0 +1,35 @@
+package com.channellink.application;
+
+import com.channellink.domain.model.Hotel;
+import com.channellink.domain.model.RoomType;
+import com.channellink.domain.port.in.RefreshHotelCatalogPort;
+import com.channellink.domain.port.out.HotelMappingPort;
+import com.channellink.domain.port.out.SupplierPort;
+
+import java.util.List;
+
+import lombok.AllArgsConstructor;
+
+/**
+ * 공급사 숙소 목록 조회 및 매핑
+ */
+@AllArgsConstructor
+public class RefreshHotelCatalogService implements RefreshHotelCatalogPort {
+
+    private final List<SupplierPort> supplierPorts;
+    private final HotelMappingPort mappingPort;
+
+    // 등록된 모든 공급사의 숙소 목록을 조회해서 숙소·객실 타입 매핑 테이블을 채운다
+    @Override
+    public void refresh() {
+        for (SupplierPort client : supplierPorts) {
+            SupplierPort.HotelCatalog catalog = client.fetchHotelCatalog();
+            for (Hotel hotel : catalog.hotels()) {
+                mappingPort.resolveOrCreateHotel(hotel.supplierCode(), hotel.hotelCode());
+            }
+            for (RoomType roomType : catalog.roomTypes()) {
+                mappingPort.resolveOrCreateRoomType(roomType.supplierCode(), roomType.hotelCode(), roomType.roomTypeCode());
+            }
+        }
+    }
+}
