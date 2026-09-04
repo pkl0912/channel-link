@@ -72,3 +72,35 @@
 ### 참고 자료
 - [Spring `ParameterizedTypeReference` Javadoc](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/ParameterizedTypeReference.html)
 - [RFC 9562 - UUID Version 7](https://www.rfc-editor.org/rfc/rfc9562.html#name-uuid-version-7)
+
+## Day 3 - 통합 검색 API 완성 + 병렬 호출 방식 재검토 + 네이밍 정리
+
+### 수행 내용
+- 통합 검색 API 실제 구현 — `SearchStayPort`/`RefreshHotelCatalogPort`(domain), `SearchStayService`/`RefreshHotelCatalogService`(application), `StayController`(adapter-in-web)까지 전 계층 연결
+- 검색 병렬 호출 방식을 WebClient의 Reactor 특성을 살린 방식으로 결정
+
+### 의사결정
+
+**1. WebClient의 Reactor 체인을 그대로 살리는 방식 결정**
+- 대안: 계속 `SupplierPort.searchAvailability()`(blocking)를 가상 스레드 executor + `CompletableFuture`로 병렬 호출 / WebClient가 이미 non-blocking이라는 걸 살려서 `Mono`/`Flux`를 끝까지 안 끊고 병렬화
+- 결정: 후자. 단, `Mono`가 domain/application으로 새어 나가면 안 되므로 **adapter-out-supplier 안에서만** 리액티브 체인을 유지하는 구조로 설계
+  - domain에 새 Port `SupplierSearchPort` 추가 — 평범한 동기 인터페이스(`searchAll(...) : List<SupplierSearchOutcome>`)
+  - 구현체 `SupplierSearchPortAdapter`(adapter-out-supplier)가 내부적으로 `Flux.fromIterable(...).flatMap(...)`으로 공급사를 동시에 호출하고, `.block()`은 맨 끝에 딱 한 번만
+  - `SupplierAClient`/`SupplierBClient`는 `SupplierPort`(blocking 계약)와 별개로, 패키지 프라이빗 `ReactiveSupplierSearch`(Mono 리턴)를 같이 구현 — Spring이 `List<ReactiveSupplierSearch>`를 자동 수집해서 어댑터가 이걸 그대로 씀
+- 이유: WebClient는 이미 Reactor Netty 기반 non-blocking 클라이언트다. 이걸 `.block()`으로 동기화했다가 가상 스레드로 다시 병렬화하는 건, 이미 있는 비동기성을 한 번 죽였다 다른 방식으로 되살리는 셈이라 불필요한 왕복이었다고 판단
+- 결과: 'SupplierSearchPort` 하나만 동기 호출하면 되는 걸로 단순해짐. domain/application에는 여전히 `Mono`/`Flux`/`reactor` import가 0건
+
+**2. domain 순수성을 일부 포기 — `application`/`adapter-out-supplier`에 Lombok 도입**
+- 대안: 계속 `application`을 외부 의존성 0으로 유지(생성자 손으로 작성) / Lombok(`@AllArgsConstructor`, `@RequiredArgsConstructor`)으로 보일러플레이트 제거
+- 결정: 도입. `application/build.gradle`, `adapter-out-supplier/build.gradle`에 Lombok 추가
+- 이유(왜 포기해도 괜찮다고 봤는지): 지금까지 지켜온 "domain/application은 프레임워크 의존성 0"이라는 원칙은 **런타임에 특정 기술에 결합되는 것을 막기 위한 것**이었다. Lombok은 Spring·JPA·Reactor와 성격이 다르다 — 컴파일 타임에만 관여하는 코드 생성기라, 생성된 `.class`는 손으로 쓴 것과 완전히 동일하고 런타임에 Lombok 자체가 클래스패스에 있을 필요도 없다(`compileOnly`). 즉 "인프라 기술에 종속된다"는 진짜 위험은 없다고 판단해서, 원칙의 정신(런타임 결합 방지)은 지키되 문구(외부 의존성 0)만 완화함
+- 포기한 것: `SearchStayService`/`RefreshHotelCatalogService` 생성자의 `List.copyOf()` 방어적 복사. `@AllArgsConstructor`는 단순 필드 대입만 생성해서 방어적 복사를 못 만든다. 이 서비스들의 생성자는 `UseCaseConfig`(우리가 직접 통제하는 composition root) 딱 한 곳에서만 호출되고, Spring이 매번 새 리스트를 만들어 넘겨주기 때문에 "호출부가 나중에 리스트를 건드리는" 시나리오 자체가 발생할 수 없다고 판단해서 감수
+- domain 자체(모델·Port)에는 여전히 Lombok을 넣지 않음 — record만으로 이미 생성자·equals·toString이 다 나와서 필요가 없었음
+
+**4. 숙소 목록 갱신(refresh) 시점 — "기동 시 1회"**
+- 배경: 매핑은 공급사의 숙소 목록 API를 호출해 만든다. 언제 호출할지(기동 시 한 번? 주기적으로? 별도 명령으로?)는 직접 판단
+- 대안: 기동 시 1회 / 주기적 스케줄 / 별도 관리용 트리거
+- 결정: 기동 시 1회 (`bootstrap`의 `CommandLineRunner catalogWarmup`)
+- 이유: 숙소 목록은 공통 규약상 "자주 안 바뀌는 정적 콘텐츠"이고, 재고·요금(매번 바뀜)과는 성격이 다르다. 이 성격 차이를 반영해 검색 때마다 다시 부르지 않고 앱 생애주기 동안 한 번만 불러도 충분하다고 판단. 과제 스코프상 별도 스케줄러·관리자 트리거까지는 두지 않음
+- 왜 필수인지: `SearchStayService.search()`의 첫 단계가 매핑 조회이기 때문에, `refresh()`가 한 번도 안 돌면 매핑 테이블이 항상 비어 있어서 검색 결과가 영원히 빈 배열만 나온다
+
