@@ -9,22 +9,22 @@ import com.channellink.domain.type.SupplierCode;
 
 import java.util.List;
 
-/**
- * Port — Supplier 연동 어댑터의 계약
- */
-public interface SupplierClient {
 
+public interface SupplierPort {
+
+    // 이 어댑터가 담당하는 공급사가 어디인지
     SupplierCode supplierCode();
 
     /** 숙소 목록 */
     HotelCatalog fetchHotelCatalog();
 
-    /** 재고·요금 조회 */
-    AvailabilityResult searchAvailability(List<String> hotelCodes, SearchCriteria criteria);
-
-    record HotelCatalog(List<Hotel> hotels, List<RoomType> roomTypes) {
+    record HotelCatalog(
+        List<Hotel> hotels,
+        List<RoomType> roomTypes) {
     }
 
-    record AvailabilityResult(List<DailyInventory> dailyInventories, List<StayOffer> stayOffers) {
+    record AvailabilityResult(
+        List<DailyInventory> dailyInventories,
+        List<StayOffer> stayOffers) {
     }
 }

@@ -21,8 +21,4 @@ public record SearchCriteria(LocalDate checkIn, LocalDate checkOut, int adults, 
             throw new IllegalArgumentException("children must not be negative");
         }
     }
-
-    public long nights() {
-        return checkOut.toEpochDay() - checkIn.toEpochDay();
-    }
 }

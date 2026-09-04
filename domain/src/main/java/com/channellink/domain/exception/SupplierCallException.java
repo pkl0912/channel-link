@@ -1,4 +1,4 @@
-package com.channellink.domain.port.out;
+package com.channellink.domain.exception;
 
 import com.channellink.domain.type.SupplierCode;
 
