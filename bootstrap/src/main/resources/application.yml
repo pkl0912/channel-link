@@ -13,6 +13,9 @@ spring:
     open-in-view: false
   main:
     web-application-type: servlet
+  threads:
+    virtual:
+      enabled: true
 
 channel-link:
   supplier:
