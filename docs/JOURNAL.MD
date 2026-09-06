@@ -104,3 +104,86 @@
 - 이유: 숙소 목록은 공통 규약상 "자주 안 바뀌는 정적 콘텐츠"이고, 재고·요금(매번 바뀜)과는 성격이 다르다. 이 성격 차이를 반영해 검색 때마다 다시 부르지 않고 앱 생애주기 동안 한 번만 불러도 충분하다고 판단. 과제 스코프상 별도 스케줄러·관리자 트리거까지는 두지 않음
 - 왜 필수인지: `SearchStayService.search()`의 첫 단계가 매핑 조회이기 때문에, `refresh()`가 한 번도 안 돌면 매핑 테이블이 항상 비어 있어서 검색 결과가 영원히 빈 배열만 나온다
 
+## Day 4 - 테스트 코드, 캐싱, 재시도/서킷브레이커, 성능·병렬성 검증
+
+### 수행 내용
+- 단위 테스트 추가 (`SearchStayServiceTest`, `SearchCriteriaTest`, `MoneyTest`)
+- 캐싱 2종 도입 — 숙소 매핑 목록 캐시(`hotelMappingsBySupplier`), 요금/재고 캐시(`availabilityCache`)
+- 재시도(Retry)/서킷브레이커(CircuitBreaker) 도입 (resilience4j)
+- k6 기반 부하 테스트로 캐시 TTL, 재시도 횟수, 동시성 확장성을 실측 검증 
+
+### 의사결정
+
+**1. 테스트 코드 **
+- 대안: 어댑터 계층(WebClient 파싱)부터 테스트할지 / 핵심 비즈니스 로직(`SearchStayService`)부터 테스트할지
+- 결정: `SearchStayService`부터 — Mockito로 `SupplierPort`/`HotelMappingPort`/`SupplierSearchPort`를 모킹한 순수 단위 테스트
+- 검증 항목: 모든 날짜에 재고 있으면 정상 반환 / 기간 중 하루라도 재고 0이면 `availableRooms=0` / 공급사 응답에 날짜가 누락돼도 0으로 취급 / 공급사 하나가 실패해도 나머지는 정상 반환되고 `failedSuppliers`에 반영
+
+**2. 요금/재고 캐시 — 숙소 매핑 캐시와는 다른 문제**
+- **숙소 매핑 캐시(`hotelMappingsBySupplier`)**: `SearchStayService.search()`가 검색마다 `HotelMappingPort.findAllHotelMappingBySupplier()`로 DB를 읽는데, 이 목록은 `refresh()` 때만 바뀌는 정적 데이터라 매번 다시 읽을 이유가 없다. `@Cacheable` + Caffeine(`maximumSize=1000, expireAfterWrite=10m`)으로 캐싱. 무효화는 `HotelMappingPortAdapter.resolveOrCreateHotel()`이 **신규 매핑을 실제로 생성했을 때만** 코드로 직접 evict 
+- **요금/재고 캐시(`availabilityCache`)**: `SupplierSearchPortAdapter`에 Caffeine `AsyncCache` 도입, 키 = `(supplierCode, 숙소코드 배치, SearchCriteria)`. **스탬피드 방지**는 `AsyncCache.get(key, mappingFunction)`의 특성을 그대로 활용 — 같은 키로 동시에 여러 요청이 들어오면 첫 요청이 등록한 진행 중인 `Future`에 나머지가 합류해서, 별도 락 코드 없이도 동시 100건이 몰려도 실제 공급사 호출은 1번만 나감 **TTL**은 부하 테스트로 검증
+
+  | TTL | 히트율(반복 1) | 히트율(반복 2) | 히트율(반복 3) | 평균 ± 표준편차 |
+  |---|---|---|---|---|
+  | 45초 | 80.0% | 76.7% | 80.8% | **79.2% ± 2.2%p** |
+  | 60초 | 80.3% | 74.4% | 77.5% | **77.4% ± 2.9%p** |
+
+  45초 부근에서 히트율이 이론적 상한(쏠림 80%·인기 날짜 5개 가정 시 계산값 ~78.6%)에 도달하고, 그 이상(60초) 늘려도 두 그룹 표본이 서로 겹쳐 통계적으로 유의미한 개선이 없음을 확인해서 45초로 유지. **정합성 오차 허용 범위**는 "검색 결과는 참고용, 실제 예약 확정 시점엔 공급사에 재검증한다"는 전제로 TTL(45초) 동안의 staleness를 허용 — 이 과제가 예약 흐름 자체를 구현하지 않아 그 재검증 단계는 없다는 점을 설계 가정으로 명시
+- 한계: mock-supplier 데이터에 의해 "TTL 동안 실제로 값이 얼마나 달라지는가(staleness의 진짜 비용)"는 측정 불가능했다. 부하 테스트로 확인한 건 캐시의 효율(히트율) 쪽 뿐이고, 45초라는 값은 "그 이상 늘려도 이득이 없다"는 상한의 근거이지 "45초가 안전하다"는 하한의 근거는 아니다
+
+**3. 재시도(Retry)/서킷브레이커(CircuitBreaker) + 성능 테스트**
+- 대안: 직접 재시도 루프를 짤지 / resilience4j 애노테이션(`@Retry`, `@CircuitBreaker`)을 쓸지
+- 결정: `resilience4j-spring-boot3` + `resilience4j-reactor`, `SupplierAClient`/`SupplierBClient`의 `searchSupplierAvailability()`에 애노테이션으로 적용
+- 왜 `SupplierSearchPortAdapter`가 아니라 개별 Client에 붙였는지: resilience4j 애노테이션은 스프링 AOP 프록시로 동작하는데, `SupplierSearchPortAdapter` 내부의 private 메서드 self-invocation은 프록시를 안 타서 적용이 안 된다. 인터페이스 밖에서 실제로 호출되는 지점(각 Client의 구현 메서드)이라야 프록시가 걸림
+- 데코레이터 순서: Retry가 CircuitBreaker보다 바깥 — 재시도 한 번 한 번이 서킷에 개별 기록돼야 실패율이 제대로 반영된다.
+- 재시도 대상 구분: `SupplierCallException`에 `retryable` 플래그를 추가 — HTTP 5xx·네트워크 오류만 `true`, HTTP 4xx와 B의 명백한 비즈니스 실패(`resultCode`)는 `false`
+- **max-attempts 성능 테스트**: mock-supplier에 "flaky" 모드(요청마다 독립적으로 N% 확률로 실패)를 추가하고, k6로 성공률·p99 지연시간을 max-attempts 1/2/3/5로 측정 (flaky 30%, 3회 반복 평균±표준편차)
+
+  | max-attempts | 성공률 | p99 지연 | 이론값(1-0.3ⁿ) |
+  |---|---|---|---|
+  | 1 | 66.1% ± 11.1%p | 50ms | 70.0% |
+  | 2 | 93.3% ± 2.9%p | 245ms | 91.0% |
+  | 3 | 96.7% ± 1.7%p | 656ms | 97.3% |
+  | 5 | 100.0% ± 0.0%p | 1,350ms ± 315ms | 99.76% |
+
+  성공률 vs 지연 비교: 1→2회는 압도적 이득(+24.5%p / +198ms), 2→3회는 이득은 작아도 방향은 맞음(+2.8%p / +414ms), 3→5회는 명백히 손해(+4.4%p 얻자고 지연이 3배 뛰고 변동성까지 폭증) → **max-attempts=3**이 합리적인 지점
+
+**4. 병렬성 검증 — k6로 실측**
+- 처음엔 bash + curl + xargs로 부하 스크립트를 짰으나 k6로 교체 — 위와 동일한 이유
+- **병렬 호출 자체를 증명**: mock-supplier에 인위적 지연(A=300ms, B=600ms)을 걸고 검색 API 응답시간을 측정
+
+  | | 순차였다면 | 병렬이면 | 실측 (3회 반복) |
+  |---|---|---|---|
+  | 예상/결과 | 900ms | ~600ms | **633ms ± 14ms** (649/623/627ms) |
+
+  실측이 순차 예상치(900ms)가 아니라 병렬 예상치(~600ms)에 딱 붙어서, `SupplierSearchPortAdapter.searchAll()`의 `Flux.flatMap`이 실제로 공급사를 동시 호출한다는 걸 정량적으로 확인
+- **동시성 확장성 검증**: Spring Boot Actuator + WebClient(reactor-netty) 커넥션 풀 메트릭(`.metrics(true, ...)`)을 노출하고, 동시 사용자(VUs) 10/50/100/200으로 늘려가며 TPS·p95/p99·CPU·커넥션 풀 사용량을 비교
+
+  순간 접속(`constant-vus`, 테스트 시작 시 VUs명이 한꺼번에 접속):
+
+  | VUs | TPS | 평균(ms) | p95(ms) | p99(ms) | 실패율 | CPU 평균/최대 | 커넥션 평균/최대 |
+  |---|---|---|---|---|---|---|---|
+  | 10 | 62 | 160 | 169 | 177 | 0.0% | 1.8% / 2.6% | 15 / 20 |
+  | 50 | 312 | 160 | 170 | 175 | 0.0% | 5.2% / 6.3% | 80 / 100 |
+  | 100 | 625 | 160 | 169 | 176 | 0.0% | 8.9% / 10.3% | 162 / 200 |
+  | 200 | 784 | **253** | **260** | **264** | **0.7%** | 8.7% / 11.1% | 335 / 363 |
+
+  10~100까지는 TPS가 동시성에 거의 비례해서 이상적으로 스케일, 지연시간은 ~160ms로 일정, CPU는 선형 증가 — 병목 없음. 200에서 처음으로 실패율 0.7% 발생 + 지연 급증. CPU(11%)·커넥션 풀(363/500) 모두 여유 있어 리소스 고갈이 아니라, macOS 커널의 listen backlog(기본값 128)를 `constant-vus`가 만드는 "시작 순간 200명 동시 접속" 버스트가 넘겨서 발생한 것으로 확인
+
+  점진적 접속(`ramping-vus`, 0명→VUs명을 10초에 걸쳐 증가):
+
+  | VUs | TPS | 평균(ms) | p95(ms) | p99(ms) | 실패율 | CPU 평균/최대 | 커넥션 평균/최대 |
+  |---|---|---|---|---|---|---|---|
+  | 10 | 49 | 159 | 165 | 171 | **0.0%** | 2.3% / 3.6% | 12 / 20 |
+  | 50 | 254 | 157 | 164 | 171 | **0.0%** | 4.7% / 7.1% | 64 / 100 |
+  | 100 | 514 | 155 | 159 | 161 | **0.0%** | 7.5% / 10.7% | 130 / 187 |
+  | 200 | 686 | 232 | 260 | 264 | **0.0%** | 8.5% / 14.2% | 277 / 363 |
+
+  같은 VUs=200이어도 접속을 점진적으로 늘리면 실패율이 완전히 0%로 사라짐(지연시간 상승은 그대로 남음 — 이건 실패가 아니라 커넥션 사용량 증가에 따른 자연스러운 큐잉 효과)
+  - 결론: 애플리케이션의 결함이 아니라 "실제 트래픽은 이렇게 순간적으로 몰리지 않는다"를 보여준 결과 — 로컬 macOS 테스트 환경의 커널 제약이었을 뿐.
+- 스크립트: `scripts/cache-load-test.sh`(캐시 TTL 파라미터 + 반복 평균), `scripts/retry-load-test.sh` + `retry-k6-test.js`(재시도 횟수), `scripts/concurrency-load-test.sh` + `concurrency-k6-test.js`(병렬 + CPU/커넥션 풀 폴링) 
+
+### 참고 자료
+- [Caffeine `AsyncCache` Javadoc](https://javadoc.io/doc/com.github.ben-manes.caffeine/caffeine/latest/com.github.benmanes.caffeine/com/github/benmanes/caffeine/cache/AsyncCache.html)
+- [resilience4j — Retry와 CircuitBreaker 조합 가이드](https://resilience4j.readme.io/docs/getting-started-3)
+
