@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.Hidden;
+
 /**
  * 부하 테스트 전용 진단 엔드포인트.
  */
@@ -27,6 +29,7 @@ public class CacheStatsController {
     }
 
     @GetMapping("/internal/cache-stats")
+    @Hidden
     public Map<String, Object> stats() {
         return Map.of(
                 "availabilityCache", toMap(supplierSearchPortAdapter.availabilityCacheStats()),
