@@ -9,6 +9,8 @@ import com.channellink.domain.model.StayOffer;
 import com.channellink.domain.exception.SupplierCallException;
 import com.channellink.domain.port.out.SupplierPort;
 import com.channellink.domain.type.SupplierCode;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -67,8 +69,9 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
         return new HotelCatalog(hotels, roomTypes);
     }
 
-    // Supplier B의 재고·요금(②)을 논블로킹으로 조회한다 — HTTP 200이어도 resultCode로 실패를 판정한다
     @Override
+    @CircuitBreaker(name = "supplierB", fallbackMethod = "availabilityFallback")
+    @Retry(name = "supplierB", fallbackMethod = "availabilityFallback")
     public Mono<AvailabilityResult> searchSupplierAvailability(List<String> hotelCodes, SearchCriteria criteria) {
         return webClient.get()
                 .uri(uriBuilder -> uriBuilder.path(SEARCH_PATH)
@@ -81,20 +84,32 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
                 .header(API_KEY_HEADER, apiKey)
                 .retrieve()
                 .bodyToMono(searchEnvelopeType())
-                .switchIfEmpty(Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_B, "empty response body")))
+                .switchIfEmpty(Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_B, "empty response body", true)))
                 // B는 장애 상황에서도 HTTP 200을 준다 — resultCode를 직접 확인해야 실패를 안다.
                 .flatMap(envelope -> SUCCESS_RESULT_CODE.equals(envelope.resultCode())
                         ? Mono.just(toAvailabilityResult(envelope.data()))
                         : Mono.error(new SupplierCallException(
                                 SupplierCode.SUPPLIER_B,
-                                "resultCode=" + envelope.resultCode() + " (" + envelope.resultMessage() + ")")))
+                                "resultCode=" + envelope.resultCode() + " (" + envelope.resultMessage() + ")",
+                                false)))
+                // 재시도 대상 - 5xx
                 .onErrorMap(WebClientResponseException.class, e -> new SupplierCallException(
                         SupplierCode.SUPPLIER_B,
                         "HTTP " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString(),
-                        e))
+                        e,
+                        e.getStatusCode().is5xxServerError()))
+                // 재시도 대상 - 타임아웃·커넥션 실패 등 일시적 오류
                 .onErrorMap(
                         e -> !(e instanceof SupplierCallException),
-                        e -> new SupplierCallException(SupplierCode.SUPPLIER_B, "call failed: " + e.getMessage(), e));
+                        e -> new SupplierCallException(SupplierCode.SUPPLIER_B, "call failed: " + e.getMessage(), e, true));
+    }
+
+    // 재시도가 소진됐거나 서킷이 OPEN이라 호출 자체가 막힌 경우 — 어떤 원인이든 SupplierCallException으로 통일
+    private Mono<AvailabilityResult> availabilityFallback(List<String> hotelCodes, SearchCriteria criteria, Throwable t) {
+        if (t instanceof SupplierCallException supplierCallException) {
+            return Mono.error(supplierCallException);
+        }
+        return Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_B, "circuit open or retries exhausted: " + t.getMessage(), t, false));
     }
 
     // B의 원본 응답(이미 세금 포함된 총액)을 표준 모델로 정규화한다
@@ -133,18 +148,20 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
             throw new SupplierCallException(
                     SupplierCode.SUPPLIER_B,
                     "HTTP " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString(),
-                    e);
+                    e,
+                    e.getStatusCode().is5xxServerError());
         } catch (RuntimeException e) {
-            throw new SupplierCallException(SupplierCode.SUPPLIER_B, "call failed: " + e.getMessage(), e);
+            throw new SupplierCallException(SupplierCode.SUPPLIER_B, "call failed: " + e.getMessage(), e, true);
         }
 
         if (envelope == null) {
-            throw new SupplierCallException(SupplierCode.SUPPLIER_B, "empty response body");
+            throw new SupplierCallException(SupplierCode.SUPPLIER_B, "empty response body", true);
         }
         if (!SUCCESS_RESULT_CODE.equals(envelope.resultCode())) {
             throw new SupplierCallException(
                     SupplierCode.SUPPLIER_B,
-                    "resultCode=" + envelope.resultCode() + " (" + envelope.resultMessage() + ")");
+                    "resultCode=" + envelope.resultCode() + " (" + envelope.resultMessage() + ")",
+                    false);
         }
         return envelope.data();
     }

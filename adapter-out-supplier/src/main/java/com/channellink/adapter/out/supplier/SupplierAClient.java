@@ -10,6 +10,8 @@ import com.channellink.domain.exception.SupplierCallException;
 import com.channellink.domain.port.out.SupplierPort;
 import com.channellink.domain.type.SupplierCode;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -75,6 +77,8 @@ public class SupplierAClient implements SupplierPort, ReactiveSupplierSearch {
 
 	// Supplier A의 재고·요금을 조회
 	@Override
+	@CircuitBreaker(name = "supplierA", fallbackMethod = "availabilityFallback")
+	@Retry(name = "supplierA", fallbackMethod = "availabilityFallback")
 	public Mono<AvailabilityResult> searchSupplierAvailability(List<String> hotelCodes, SearchCriteria criteria) {
 		return webClient.get()
 			.uri(uriBuilder -> uriBuilder.path(AVAILABILITY_PATH)
@@ -87,15 +91,26 @@ public class SupplierAClient implements SupplierPort, ReactiveSupplierSearch {
 			.header(API_KEY_HEADER, apiKey)
 			.retrieve()
 			.bodyToMono(AvailabilityResponse.class)
-			.switchIfEmpty(Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_A, "empty response body")))
+			.switchIfEmpty(Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_A, "empty response body", true)))
 			.map(this::toAvailabilityResult)
+			// 재시도 대상 - 5xx
 			.onErrorMap(WebClientResponseException.class, e -> new SupplierCallException(
 				SupplierCode.SUPPLIER_A,
 				"HTTP " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString(),
-				e))
+				e,
+				e.getStatusCode().is5xxServerError()))
+			// 재시도 대상 - 타임아웃·커넥션 실패 등 일시적 오류
 			.onErrorMap(
 				e -> !(e instanceof SupplierCallException),
-				e -> new SupplierCallException(SupplierCode.SUPPLIER_A, "call failed: " + e.getMessage(), e));
+				e -> new SupplierCallException(SupplierCode.SUPPLIER_A, "call failed: " + e.getMessage(), e, true));
+	}
+
+	// 재시도가 소진됐거나 서킷이 OPEN이라 호출 자체가 막힌 경우 — 어떤 원인이든 SupplierCallException으로 통일
+	private Mono<AvailabilityResult> availabilityFallback(List<String> hotelCodes, SearchCriteria criteria, Throwable t) {
+		if (t instanceof SupplierCallException supplierCallException) {
+			return Mono.error(supplierCallException);
+		}
+		return Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_A, "circuit open or retries exhausted: " + t.getMessage(), t, false));
 	}
 
 	// A의 원본 응답을 표준 모델로 정규화
@@ -132,16 +147,17 @@ public class SupplierAClient implements SupplierPort, ReactiveSupplierSearch {
 		try {
 			T result = mono.block();
 			if (result == null) {
-				throw new SupplierCallException(SupplierCode.SUPPLIER_A, "empty response body");
+				throw new SupplierCallException(SupplierCode.SUPPLIER_A, "empty response body", true);
 			}
 			return result;
 		} catch (WebClientResponseException e) {
 			throw new SupplierCallException(
 				SupplierCode.SUPPLIER_A,
 				"HTTP " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString(),
-				e);
+				e,
+				e.getStatusCode().is5xxServerError());
 		} catch (RuntimeException e) {
-			throw new SupplierCallException(SupplierCode.SUPPLIER_A, "call failed: " + e.getMessage(), e);
+			throw new SupplierCallException(SupplierCode.SUPPLIER_A, "call failed: " + e.getMessage(), e, true);
 		}
 	}
 

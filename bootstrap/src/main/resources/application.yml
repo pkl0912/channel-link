@@ -33,3 +33,33 @@ channel-link:
       base-url: http://localhost:9090
     b:
       base-url: http://localhost:9090
+
+resilience4j:
+  retry:
+    retry-aspect-order: 1 # Retry가 CircuitBreaker보다 바깥쪽 — 재시도 한 번 한 번이 서킷에 개별 기록되어야 함
+    instances:
+      supplierA:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exception-predicate: com.channellink.adapter.out.supplier.RetryableSupplierExceptionPredicate
+      supplierB:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exception-predicate: com.channellink.adapter.out.supplier.RetryableSupplierExceptionPredicate
+  circuitbreaker:
+    circuit-breaker-aspect-order: 2
+    instances:
+      supplierA:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+      supplierB:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
