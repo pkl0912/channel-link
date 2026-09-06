@@ -7,6 +7,10 @@ plugins {
 dependencies {
     implementation(project(":domain"))
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+
+    implementation("org.springframework.boot:spring-boot-starter-cache")
+    implementation("com.github.ben-manes.caffeine:caffeine")
+
     runtimeOnly("com.h2database:h2")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
