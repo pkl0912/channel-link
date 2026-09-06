@@ -41,12 +41,18 @@ function dateFromOffset(offsetDays) {
 export default function () {
   // VU 번호와 반복 번호를 조합해서 요청마다 유니크한 날짜를 쓴다 — availabilityCache를
   // 절대 히트하지 않게 해서, 매 요청이 진짜로 Supplier A(재시도 로직 포함)를 타게 만든다.
-  const offset = TAIL_BASE + __VU * 100000 + __ITER;
+  // 배율(1000)은 VU당 최대 반복 횟수보다 넉넉히 크면 충분하다 — 너무 크게 잡으면
+  // (예: 100000) 오프셋이 누적돼 연도가 5자리로 넘어가서 LocalDate 파싱 자체가
+  // 깨지고, 그 요청은 재시도 없이 즉시 에러로 끝나 측정을 완전히 왜곡시킨다.
+  const offset = TAIL_BASE + __VU * 1000 + __ITER;
   const checkIn = dateFromOffset(offset);
   const checkOut = dateFromOffset(offset + 4);
 
+  // 요청마다 URL(날짜)이 달라서, k6 기본 태그(url) 그대로 두면 요청 수만큼 고유 시계열이
+  // 생겨 "high cardinality" 경고가 뜬다 — 태그를 고정값으로 묶어서 하나의 지표로 집계되게 한다
   const res = http.get(
-    `${BASE_URL}/api/v1/stays/search?checkIn=${checkIn}&checkOut=${checkOut}&adults=2&children=0`
+    `${BASE_URL}/api/v1/stays/search?checkIn=${checkIn}&checkOut=${checkOut}&adults=2&children=0`,
+    { tags: { name: 'search' } }
   );
 
   const ok = check(res, { 'status is 200': (r) => r.status === 200 });

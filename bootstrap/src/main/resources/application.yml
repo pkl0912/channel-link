@@ -1,5 +1,11 @@
 server:
   port: 8080
+  tomcat:
+    # 기본 accept-count(100)가 동시 커넥션 200개가 한꺼번에 몰리는 순간을 못 받아내서
+    # "connection reset by peer"가 발생했다 — accept queue를 넉넉히 늘려 순간 버스트를 흡수한다.
+    # max-connections도 명시적으로 여유 있게 잡아둔다(가상 스레드라 처리 자체는 병목이 아님).
+    accept-count: 1000
+    max-connections: 10000
 
 spring:
   application:
@@ -25,6 +31,14 @@ spring:
     cache-names: hotelMappingsBySupplier
     caffeine:
       spec: maximumSize=1000,expireAfterWrite=10m,recordStats
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 부하 테스트에서 CPU(process.cpu.usage)·커넥션 풀(reactor.netty.*) 지표를
+        # curl로 긁어보기 위함 — 운영에 필요한 엔드포인트만 최소한으로 노출
+        include: health,metrics
 
 channel-link:
   supplier:

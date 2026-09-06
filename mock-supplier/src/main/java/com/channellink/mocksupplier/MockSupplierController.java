@@ -19,6 +19,8 @@ public class MockSupplierController {
     private final Map<String, String> modes = new ConcurrentHashMap<>();
     // "flaky" 모드에서 요청마다 독립적으로 실패할 확률(%) — 재시도 횟수(max-attempts) 검증용
     private final Map<String, Integer> flakyRates = new ConcurrentHashMap<>();
+    // 요청마다 인위적으로 지연시키는 시간(ms) — 공급사 간 병렬 호출 성능 검증용
+    private final Map<String, Integer> delaysMs = new ConcurrentHashMap<>();
 
     @PostMapping("/control/{supplier}/mode")
     public Map<String, String> setMode(@PathVariable String supplier, @RequestParam String value) {
@@ -32,10 +34,29 @@ public class MockSupplierController {
         return Map.of(supplier, value);
     }
 
+    @PostMapping("/control/{supplier}/delay-ms")
+    public Map<String, Integer> setDelay(@PathVariable String supplier, @RequestParam int value) {
+        delaysMs.put(supplier, value);
+        return Map.of(supplier, value);
+    }
+
     // "flaky" 모드일 때만 의미 있음 — 요청마다 독립적으로 flakyRate% 확률로 실패
     private boolean shouldFail(String supplier) {
         int rate = flakyRates.getOrDefault(supplier, 50);
         return ThreadLocalRandom.current().nextInt(100) < rate;
+    }
+
+    // 응답 전에 설정된 만큼 인위적으로 지연시킨다 (기본 0 = 지연 없음)
+    private void applyDelay(String supplier) {
+        int ms = delaysMs.getOrDefault(supplier, 0);
+        if (ms <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     // Supplier A
@@ -50,6 +71,7 @@ public class MockSupplierController {
 
     @GetMapping("/a/v1/availability")
     public ResponseEntity<?> availabilityA(@RequestParam(required = false) String hotelCodes) {
+        applyDelay("a");
         return switch (modes.getOrDefault("a", "normal")) {
             case "error" -> errorResponseA();
             case "no-response" -> sleepForever();
@@ -89,6 +111,7 @@ public class MockSupplierController {
 
     @GetMapping("/b/api/search")
     public ResponseEntity<EnvelopeB<SearchDataB>> searchB(@RequestParam(required = false) String propertyIds) {
+        applyDelay("b");
         // B는 장애 상황에서도 HTTP 200을 준다 — resultCode로만 실패를 알린다.
         return switch (modes.getOrDefault("b", "normal")) {
             case "error" -> ResponseEntity.ok(EnvelopeB.failure("E503", "TEMPORARILY_UNAVAILABLE"));
