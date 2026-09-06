@@ -24,7 +24,7 @@ spring:
     type: caffeine
     cache-names: hotelMappingsBySupplier
     caffeine:
-      spec: maximumSize=1000,expireAfterWrite=10m
+      spec: maximumSize=1000,expireAfterWrite=10m,recordStats
 
 channel-link:
   supplier:

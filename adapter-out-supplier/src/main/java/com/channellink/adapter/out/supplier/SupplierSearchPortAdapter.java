@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import lombok.AllArgsConstructor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -29,7 +30,7 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
     private static final int MAX_HOTEL_CODES_PER_CALL = 50;
 
     // 요금/재고 캐시 TTL
-    private static final Duration AVAILABILITY_CACHE_TTL = Duration.ofSeconds(30);
+    private static final Duration AVAILABILITY_CACHE_TTL = Duration.ofSeconds(45);
 
     private final List<ReactiveSupplierSearch> reactiveSearches;
 
@@ -38,7 +39,13 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
             Caffeine.newBuilder()
                     .expireAfterWrite(AVAILABILITY_CACHE_TTL)
                     .maximumSize(10_000)
+                    .recordStats()
                     .buildAsync();
+
+    // TTL/maximumSize 튜닝을 위한 부하 테스트 전용 — 히트율·eviction 수를 확인하는 용도
+    public CacheStats availabilityCacheStats() {
+        return availabilityCache.synchronous().stats();
+    }
 
     // 등록된 모든 공급사를 Flux로 동시에 호출하고, 결과를 한 번에 모아서 반환
     @Override
