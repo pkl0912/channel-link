@@ -9,6 +9,9 @@ import com.channellink.domain.mapping.RoomTypeMapping;
 import com.channellink.adapter.out.persistence.support.UuidV7;
 import com.channellink.domain.port.out.HotelMappingPort;
 import com.channellink.domain.type.SupplierCode;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,8 +25,11 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class HotelMappingPortAdapter implements HotelMappingPort {
 
+    private static final String HOTEL_MAPPINGS_CACHE = "hotelMappingsBySupplier";
+
     private final HotelMappingJpaRepository hotelMappingJpaRepository;
     private final RoomTypeMappingJpaRepository roomTypeMappingJpaRepository;
+    private final CacheManager cacheManager;
 
     // 숙소 매핑을 조회하고, 없으면 내부 식별자를 발급해 저장
     @Override
@@ -38,6 +44,8 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
         try {
             HotelMappingJpaEntity saved = hotelMappingJpaRepository.save(
                     new HotelMappingJpaEntity(UuidV7.generate().toString(), supplierCode, hotelCode));
+
+            evictHotelMappingsCache(supplierCode);
             return toDomain(saved);
         } catch (DataIntegrityViolationException raceLost) {
             return hotelMappingJpaRepository.findBySupplierCodeAndHotelCode(supplierCode, hotelCode)
@@ -68,10 +76,19 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
         }
     }
 
-    // 이 공급사의 숙소 매핑을 DB에서 전부 조회
+    // 이 공급사의 숙소 매핑을 전부 조회
     @Override
+    @Cacheable(cacheNames = HOTEL_MAPPINGS_CACHE, key = "#supplierCode")
     public List<HotelMapping> findAllHotelMappingBySupplier(SupplierCode supplierCode) {
         return hotelMappingJpaRepository.findAllBySupplierCode(supplierCode).stream().map(this::toDomain).toList();
+    }
+
+    // 새 숙소 추가됐을 때 캐시 삭제
+    private void evictHotelMappingsCache(SupplierCode supplierCode) {
+        Cache cache = cacheManager.getCache(HOTEL_MAPPINGS_CACHE);
+        if (cache != null) {
+            cache.evict(supplierCode);
+        }
     }
 
     private HotelMapping toDomain(HotelMappingJpaEntity entity) {
