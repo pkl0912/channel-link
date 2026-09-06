@@ -9,13 +9,17 @@ import com.channellink.domain.port.out.SupplierSearchPort;
 import com.channellink.domain.type.SupplierCode;
 import org.springframework.stereotype.Component;
 
+import com.github.benmanes.caffeine.cache.AsyncCache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.AllArgsConstructor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 
 
 @Component
@@ -24,7 +28,17 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
 
     private static final int MAX_HOTEL_CODES_PER_CALL = 50;
 
+    // 요금/재고 캐시 TTL
+    private static final Duration AVAILABILITY_CACHE_TTL = Duration.ofSeconds(30);
+
     private final List<ReactiveSupplierSearch> reactiveSearches;
+
+    // AsyncCache - 캐시 스탬피드 방지
+    private final AsyncCache<AvailabilityCacheKey, SupplierPort.AvailabilityResult> availabilityCache =
+            Caffeine.newBuilder()
+                    .expireAfterWrite(AVAILABILITY_CACHE_TTL)
+                    .maximumSize(10_000)
+                    .buildAsync();
 
     // 등록된 모든 공급사를 Flux로 동시에 호출하고, 결과를 한 번에 모아서 반환
     @Override
@@ -44,11 +58,20 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
 
         // 배치 여러 개를 이 Supplier 안에서는 순차로 이어 붙인다 — 다른 Supplier와는 병렬
         return Flux.fromIterable(partition(hotelCodes, MAX_HOTEL_CODES_PER_CALL))
-                .concatMap(batch -> client.searchSupplierAvailability(batch, criteria))
+                .concatMap(batch -> searchBatchCached(client, batch, criteria))
                 .collectList()
                 .map(batchResults -> merge(client.supplierCode(), batchResults))
                 .onErrorResume(SupplierCallException.class,
                         e -> Mono.just(new SupplierSearchOutcome(client.supplierCode(), List.of(), List.of(), true)));
+    }
+
+    // 캐시 요청
+    private Mono<SupplierPort.AvailabilityResult> searchBatchCached(
+            ReactiveSupplierSearch client, List<String> batch, SearchCriteria criteria) {
+        AvailabilityCacheKey key = new AvailabilityCacheKey(client.supplierCode(), batch, criteria);
+        return Mono.fromFuture(() -> availabilityCache.get(
+                        key, (k, executor) -> client.searchSupplierAvailability(batch, criteria).toFuture()))
+                .onErrorMap(CompletionException.class, Throwable::getCause);
     }
 
     // 배치별로 따로 온 결과를 공급사 하나의 결과로 다시 합친다
@@ -69,5 +92,9 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
             result.add(source.subList(i, Math.min(i + size, source.size())));
         }
         return result;
+    }
+
+    // 요금/재고 캐시 키
+    private record AvailabilityCacheKey(SupplierCode supplierCode, List<String> hotelCodes, SearchCriteria criteria) {
     }
 }
