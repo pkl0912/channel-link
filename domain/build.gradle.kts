@@ -1,0 +1,11 @@
+plugins {
+    java
+}
+
+// 의도적으로 비워둠: Spring, JPA, WebClient 등 어떤 프레임워크 의존성도 추가하지 말 것.
+// 여기 의존성이 추가되는 순간 domain이 특정 어댑터에 종속된다는 뜻이므로 리뷰에서 걸러야 한다.
+dependencies {
+    testImplementation(platform("org.junit:junit-bom:5.11.3"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.assertj:assertj-core:3.26.3")
+}

@@ -10,6 +10,7 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 @Configuration
 public class SupplierWebClientConfig {
@@ -23,7 +24,9 @@ public class SupplierWebClientConfig {
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) CONNECT_TIMEOUT.toMillis())
                 .responseTimeout(RESPONSE_TIMEOUT)
                 .doOnConnected(conn -> conn.addHandlerLast(
-                        new ReadTimeoutHandler(RESPONSE_TIMEOUT.getSeconds(), TimeUnit.SECONDS)));
+                        new ReadTimeoutHandler(RESPONSE_TIMEOUT.getSeconds(), TimeUnit.SECONDS)))
+                // 커넥션 풀 사용량(active/idle/pending)을 Micrometer로 노출
+                .metrics(true, Function.identity());
 
         return WebClient.builder().clientConnector(new ReactorClientHttpConnector(httpClient));
     }

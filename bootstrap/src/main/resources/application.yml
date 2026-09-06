@@ -1,5 +1,11 @@
 server:
   port: 8080
+  tomcat:
+    # 기본 accept-count(100)가 동시 커넥션 200개가 한꺼번에 몰리는 순간을 못 받아내서
+    # "connection reset by peer"가 발생했다 — accept queue를 넉넉히 늘려 순간 버스트를 흡수한다.
+    # max-connections도 명시적으로 여유 있게 잡아둔다(가상 스레드라 처리 자체는 병목이 아님).
+    accept-count: 1000
+    max-connections: 10000
 
 spring:
   application:
@@ -7,16 +13,67 @@ spring:
   datasource:
     url: jdbc:h2:mem:channel-link;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
   jpa:
     hibernate:
       ddl-auto: update
     open-in-view: false
   main:
     web-application-type: servlet
+  threads:
+    virtual:
+      enabled: true
+  cache:
+    type: caffeine
+    cache-names: hotelMappingsBySupplier
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=10m,recordStats
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 부하 테스트에서 CPU(process.cpu.usage)·커넥션 풀(reactor.netty.*) 지표를
+        # curl로 긁어보기 위함 — 운영에 필요한 엔드포인트만 최소한으로 노출
+        include: health,metrics
 
 channel-link:
   supplier:
+    api-key: mock-api-key
     a:
       base-url: http://localhost:9090
     b:
       base-url: http://localhost:9090
+
+resilience4j:
+  retry:
+    retry-aspect-order: 1 # Retry가 CircuitBreaker보다 바깥쪽 — 재시도 한 번 한 번이 서킷에 개별 기록되어야 함
+    instances:
+      supplierA:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exception-predicate: com.channellink.adapter.out.supplier.RetryableSupplierExceptionPredicate
+      supplierB:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exception-predicate: com.channellink.adapter.out.supplier.RetryableSupplierExceptionPredicate
+  circuitbreaker:
+    circuit-breaker-aspect-order: 2
+    instances:
+      supplierA:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+      supplierB:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
