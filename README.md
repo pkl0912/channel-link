@@ -130,10 +130,12 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 
 내부 식별자에 무작위 UUIDv4 대신 시간 정렬 특성을 가진 UUIDv7을 사용하여 B-tree 인덱스의 지역성을 고려
 
+
 ## 트레이드오프 및 한계점
 
 * **캐시 TTL의 staleness 비용 실측 불가**: 부하 테스트로 확인한 것은 캐시 히트율이며, 45초는 "더 늘려도 히트율 개선이 크지 않은 지점"의 근거임. 실제 데이터 변경 빈도와 허용 가능한 Staleness는 추가 검증이 필요
 * **배치 내부는 순차 처리**: 한 공급사가 50개를 초과하는 숙소를 보유할 경우 배치를 나누고 `concatMap`으로 순차 처리함. 현재 규모에서는 문제가 없지만, 숙소가 대량으로 증가하면 `flatMap + concurrency 제한`으로 변경 가능.
+
 
 ## 연동 지표 · 모니터링 설계
 
@@ -141,7 +143,8 @@ Supplier별 성공률·응답 지연·타임아웃 비율을 관찰하기 위한
 
 ### 성공률 · 응답 지연 — 기존 구조로 대부분 확보
 
-`resilience4j-spring-boot3`는 `MeterRegistry` 빈이 있으면 `@CircuitBreaker`/`@Retry` 호출 결과를 자동으로 Micrometer 메트릭에 바인딩함. `bootstrap`에 이미 `spring-boot-starter-actuator`가 있어 `MeterRegistry` 빈은 떠 있으므로, 아래 두 가지만 추가하면 즉시 노출됨
+resilience4j-spring-boot3는 `MeterRegistry` 빈이 있으면 @CircuitBreaker/@Retry 호출 결과를 자동으로 Micrometer 메트릭에 바인딩함. 
+bootstrap에 이미 spring-boot-starter-actuator가 있어 `MeterRegistry` 빈은 떠 있으므로, 아래 두 가지만 추가하면 즉시 노출됨
 
 ```kotlin
 // bootstrap/build.gradle.kts
@@ -157,7 +160,7 @@ management:
         include: health, metrics, prometheus
 ```
 
-`/actuator/prometheus`에서 공급사(`name` 태그: `supplierA`/`supplierB`)별로 아래 지표가 코드 추가 없이 노출됨
+/actuator/prometheus에서 공급사(`name` 태그: `supplierA`/`supplierB`)별로 아래 지표가 코드 추가 없이 노출됨
 
 | 지표 | 설명 |
 | --- | --- |
@@ -173,8 +176,9 @@ resilience4j의 `kind` 태그는 성공/실패만 구분하고 타임아웃·5xx
 
 ### 활용 방안
 
-Prometheus가 `/actuator/prometheus`를 스크래핑하고 Grafana로 시각화. 
+Prometheus가 /actuator/prometheus를 스크래핑하고 Grafana로 시각화. 
 공급사별 성공률이 임계치 이하로 떨어지거나 타임아웃 비율이 급증하면 알림 기능 확장 가능
+
 
 ## 실행 방법
 
