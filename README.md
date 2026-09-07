@@ -25,18 +25,18 @@
 * [x] 부분 실패 허용 — 공급사 하나가 실패해도 정상 공급사의 결과 반환, `failedSuppliers`로 실패 공급사 표시
 * [x] 연박 예약 가능 객실 수 계산 — 기간 내 날짜별 잔여 객실 수의 최솟값
 * [x] 숙소/객실 타입 내부 식별자 매핑 — 최초 조회 시 자동 생성 후 재사용
-* [x] 숙소 목록 갱신 — 애플리케이션 기동 시 1회 실행
-* [x] 신규 공급사 추가에 열린 구조(OCP) — 기존 코드 수정 없이 어댑터 추가만으로 확장
+* [x] 숙소 목록 갱신 — 애플리케이션 기동 시 1회 실행, 공급사 하나가 실패해도 나머지로 계속 진행
+* [x] 신규 공급사 추가에 열린 구조 — `SupplierCode` 상수와 어댑터 구현체 추가만으로 확장, 기존 검색 로직은 수정 없음
 
 ### 추가 구현
 
-* [x] 재시도 — resilience4j `@Retry`, 5xx·네트워크 오류만 재시도
-* [x] 서킷브레이커 — resilience4j `@CircuitBreaker`, 공급사별 독립
-* [x] 요금/재고 캐시 — TTL 설계 및 캐시 스탬피드 방지, 부하 테스트를 통한 TTL 검증
+* [x] 재시도 — resilience4j `@Retry`, 5xx·타임아웃·네트워크 오류만 재시도 (`SupplierCallException.retryable()` 기준)
+* [x] 서킷브레이커 — resilience4j `@CircuitBreaker`, 공급사별 독립 인스턴스(`supplierA`/`supplierB`)
+* [x] 요금/재고 캐시 — TTL 설계 및 캐시 스탬피드 방지, 부하 테스트를 통한 TTL 비교
 * [x] API 문서 자동화 — springdoc-openapi(Swagger UI)
 * [x] 단위 테스트 — 핵심 도메인 로직 및 값 객체 검증
 * [x] 성능/동시성 부하 테스트 — k6 기반 재현 가능한 스크립트
-* [x] 연동 지표 · 모니터링 설계 — Supplier별 성공률/응답 지연/타임아웃 비율 (설계)
+* [x] 연동 지표 · 모니터링 설계 — Supplier별 성공률/응답 지연은 `/actuator/prometheus`로 실측 확인, 타임아웃 비율은 설계
 
 ## 기술 스택
 
@@ -74,6 +74,8 @@
 
 `RefreshHotelCatalogService`가 등록된 모든 `SupplierPort`의 `fetchHotelCatalog()`를 호출하여 `HotelMapping`과 `RoomTypeMapping`을 생성
 
+공급사 하나의 호출이 실패해도 나머지 공급사로 계속 진행함. 실패한 공급사는 `WARN` 로그만 남기고, 애플리케이션은 정상적으로 기동됨 — 해당 공급사는 매핑이 비어 있어 다음 갱신 전까지 검색 결과에서 빠짐
+
 ### 통합 검색
 
 <img src="channel-flow.jpeg" alt="통합 검색 데이터 흐름" width="600">
@@ -92,9 +94,11 @@
 
 `domain`/`application`의 빌드 파일에 프레임워크 의존성을 원천 차단하여, 아키텍처 경계를 코드 리뷰가 아닌 **빌드 단계에서 강제**
 
-### 2. 매핑만 영속, 요금/재고는 라이브 조회
+### 2. 매핑만 영속, 요금/재고는 라이브 조회 + 짧은 TTL 캐시
 
-숙소 목록은 변경 빈도가 낮아 매핑 정보만 저장하고, 요금/재고는 실시간성이 중요하므로 저장하지 않고 검색 시 공급사에서 조회
+숙소 목록은 변경 빈도가 낮아 매핑 정보만 DB에 영속화하고, 요금/재고는 실시간성이 중요하므로 DB에는 저장하지 않고 검색 시 공급사에서 조회
+
+다만 매 요청마다 공급사를 다시 부르는 비용을 줄이기 위해 별도의 인메모리 캐시(Caffeine `AsyncCache`, TTL 45초)는 둠 — "저장 안 함"은 DB 영속화 기준이며, 짧은 TTL의 메모리 캐시와는 별개 계층 ([6번](#6-요금재고-캐시) 참고)
 
 ### 3. `SupplierCallException`으로 실패 통일
 
@@ -104,9 +108,9 @@ Supplier A의 HTTP 상태 기반 실패와 Supplier B의 `HTTP 200 + resultCode`
 
 ### 4. 레지스트리 패턴으로 공급사 확장
 
-`SupplierPort`/`ReactiveSupplierSearch` 구현체를 Spring이 `List<T>`로 자동 수집하도록 구성
+`SupplierPort`/`ReactiveSupplierSearch` 구현체를 Spring이 List<T>로 자동 수집하도록 구성
 
-신규 공급사는 ENUM과 어댑터를 추가하는 것만으로 기존 검색 로직 수정 없이 확장(OCP).
+신규 공급사 추가 시 `SearchStayService`/`SupplierSearchPortAdapter` 등 기존 검색 유스케이스는 수정하지 않고, `SupplierCode`에 상수를 추가하고 해당 어댑터 구현체를 추가하는 것만으로 확장 (식별자를 enum으로 관리하는 부분 자체는 파일 수정이 필요하지만, 기존 로직에 분기/조건문을 추가하는 수정은 없음)
 
 ### 5. 도메인은 동기, Adapter 내부는 리액티브
 
@@ -114,9 +118,10 @@ Supplier A의 HTTP 상태 기반 실패와 Supplier B의 `HTTP 200 + resultCode`
 
 리액티브 타입은 Adapter 외부로 노출하지 않음
 
+**Virtual Thread와 Reactor를 함께 쓰는 이유**: 애플리케이션/도메인 계층(Tomcat 요청 처리)은 `spring.threads.virtual.enabled=true`로 Virtual Thread 기반 동기 모델을 유지하고, 다수 Supplier를 동시에 호출해야 하는 `adapter-out-supplier`에서만 WebClient/Reactor로 I/O를 병렬화함. 
 ### 6. 요금/재고 캐시
 
-Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 경우 진행 중인 Supplier 호출을 공유하고 캐시 스탬피드를 방지
+Caffeine `AsyncCache.get(key, mappingFunction)`을 사용 — 캐시 미스 시 생성되는 Supplier 호출의 `Future`를 동일 키로 들어오는 요청들이 공유하도록 해서 캐시 스탬피드를 방지 (Caffeine이 키당 정확히 한 번만 계산을 실행함을 보장)
 
 캐시 키는 `(supplierCode, 숙소 코드 배치, SearchCriteria)`로 구성, TTL은 부하 테스트를 통해 **45초**로 설정
 
@@ -124,11 +129,15 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 
 `mock-supplier`의 `flaky` 모드를 활용하여 실패 확률을 조절하고 Retry 횟수별 성공률과 p99 지연시간을 비교
 
-이를 바탕으로 `max-attempts=3`으로 설정했으며, Retry가 CircuitBreaker보다 바깥에서 동작하도록 구성
+이를 바탕으로 `max-attempts=3`으로 설정. `resilience4j.retry.retry-aspect-order=1` / `circuitbreaker.circuit-breaker-aspect-order=2`로 Retry가 CircuitBreaker보다 바깥에서 동작하도록 명시적으로 구성(재시도 한 번 한 번이 서킷에 개별 기록됨) — 애노테이션을 같이 쓸 때 실제 decorator 순서는 이 aspect-order 설정이 결정함
+
+공급사별로 별도의 CircuitBreaker/Retry 인스턴스를 사용해 장애를 격리 — 하나가 열려도 다른 공급사 호출에는 영향 없음
+
+재시도 대상 판정은 `SupplierCallException.retryable()`을 `RetryableSupplierExceptionPredicate`(`retry-exception-predicate` 설정으로 등록)가 읽어 결정 — 5xx·타임아웃·네트워크 오류는 `true`, 4xx 및 Supplier B의 `resultCode` 기반 비즈니스 실패는 `false`
 
 ### 8. UUIDv7
 
-내부 식별자에 무작위 UUIDv4 대신 시간 정렬 특성을 가진 UUIDv7을 사용하여 B-tree 인덱스의 지역성을 고려
+내부 식별자에 UUIDv4 대신, 시간 순서 특성을 가진 UUIDv7을 사용하여 B-tree 인덱스의 삽입 locality를 고려. UUIDv4는 완전 무작위라 삽입 위치가 분산되는 반면, UUIDv7은 타임스탬프 기반이라 생성 순서에 가깝게 삽입됨
 
 
 ## 트레이드오프 및 한계점
@@ -139,45 +148,23 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 
 ## 연동 지표 · 모니터링 설계
 
-Supplier별 성공률·응답 지연·타임아웃 비율을 관찰하기 위한 설계. 별도 대시보드까지 구축하지는 않았고, 기존 resilience4j/Micrometer 조합을 최대한 활용하는 방향으로 설계함
+Supplier별 성공률·응답 지연·타임아웃 비율을 관찰하기 위한 설계. `micrometer-registry-prometheus`를 실제로 추가하고 `/actuator/prometheus`를 열어 아래 내용을 직접 확인함 (Grafana 대시보드 구축까지는 하지 않음)
 
-### 성공률 · 응답 지연 — 기존 구조로 대부분 확보
+### 성공률 · 응답 지연 — resilience4j 기본 메트릭으로 확보 (실측 확인)
 
-resilience4j-spring-boot3는 `MeterRegistry` 빈이 있으면 @CircuitBreaker/@Retry 호출 결과를 자동으로 Micrometer 메트릭에 바인딩함. 
-bootstrap에 이미 spring-boot-starter-actuator가 있어 `MeterRegistry` 빈은 떠 있으므로, 아래 두 가지만 추가하면 즉시 노출됨
+`resilience4j-spring-boot3`는 `MeterRegistry` 빈이 있으면 `@CircuitBreaker`/`@Retry` 호출 결과를 자동으로 Micrometer 메트릭에 바인딩함. 
 
-```kotlin
-// bootstrap/build.gradle.kts
-implementation("io.micrometer:micrometer-registry-prometheus")
-```
+`name` 태그가 실제로 `supplierA`/`supplierB`로 분리되어 나오는 것을 확인 — 코드 추가 없이 resilience4j 애노테이션 설정만으로 확보됨
 
-```yaml
-# application.yml
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health, metrics, prometheus
-```
+### 타임아웃 비율 — 커스텀 Counter 필요 (미구현, 설계만)
 
-/actuator/prometheus에서 공급사(`name` 태그: `supplierA`/`supplierB`)별로 아래 지표가 코드 추가 없이 노출됨
-
-| 지표 | 설명 |
-| --- | --- |
-| `resilience4j_circuitbreaker_calls_seconds_count{name, kind}` | 성공률(`successful / (successful + failed)`) 계산 |
-| `resilience4j_circuitbreaker_calls_seconds_sum{name, kind}` | 누적 응답 시간 → 평균/percentile 지연 계산 |
-| `resilience4j_retry_calls_total{name, kind}` | 재시도 없이 성공 / 재시도로 성공 / 최종 실패 건수 |
-
-### 타임아웃 비율 — 커스텀 Counter 필요
-
-resilience4j의 `kind` 태그는 성공/실패만 구분하고 타임아웃·5xx·4xx 비즈니스 실패를 구분하지 않음. `SupplierAClient`/`SupplierBClient`의 기존 에러 매핑 지점(`.onErrorMap`)에 실패 원인별 `Counter`를 추가하는 방식으로 설계
+CircuitBreaker의 `kind` 태그는 성공/실패/무시 여부만 구분하고, 실패 원인(타임아웃·5xx·4xx 비즈니스 실패)을 세분화하지 않음. `SupplierAClient`/`SupplierBClient`의 기존 에러 매핑 지점(`.onErrorMap`)에 실패 원인별 `Counter`를 추가하는 방식으로 설계
 
 타임아웃 비율 = `reason="timeout"` 건수 / 전체 실패 건수
 
 ### 활용 방안
 
-Prometheus가 /actuator/prometheus를 스크래핑하고 Grafana로 시각화. 
-공급사별 성공률이 임계치 이하로 떨어지거나 타임아웃 비율이 급증하면 알림 기능 확장 가능
+Prometheus가 `/actuator/prometheus`를 스크래핑하고 Grafana로 시각화. 공급사별 성공률이 임계치 이하로 떨어지거나 타임아웃 비율이 급증하면 알림 기능으로 확장 가능
 
 
 ## 실행 방법

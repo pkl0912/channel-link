@@ -38,7 +38,7 @@ management:
       exposure:
         # 부하 테스트에서 CPU(process.cpu.usage)·커넥션 풀(reactor.netty.*) 지표를
         # curl로 긁어보기 위함 — 운영에 필요한 엔드포인트만 최소한으로 노출
-        include: health,metrics
+        include: health,metrics,prometheus
 
 channel-link:
   supplier:
