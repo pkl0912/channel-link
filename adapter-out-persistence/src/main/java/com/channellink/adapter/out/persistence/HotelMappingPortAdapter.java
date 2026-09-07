@@ -42,7 +42,7 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
         }
 
         try {
-            HotelMappingJpaEntity saved = hotelMappingJpaRepository.save(
+            HotelMappingJpaEntity saved = hotelMappingJpaRepository.saveAndFlush(
                     new HotelMappingJpaEntity(UuidV7.generate().toString(), supplierCode, hotelCode));
 
             evictHotelMappingsCache(supplierCode);
@@ -65,7 +65,8 @@ public class HotelMappingPortAdapter implements HotelMappingPort {
         }
 
         try {
-            RoomTypeMappingJpaEntity saved = roomTypeMappingJpaRepository.save(new RoomTypeMappingJpaEntity(
+            // saveAndFlush여야 유니크 제약 위반이 이 try 블록 안(커밋 전)에 터져서 catch가 잡을 수 있음
+            RoomTypeMappingJpaEntity saved = roomTypeMappingJpaRepository.saveAndFlush(new RoomTypeMappingJpaEntity(
                     UuidV7.generate().toString(), supplierCode, hotelCode, roomTypeCode));
             return toDomain(saved);
         } catch (DataIntegrityViolationException raceLost) {
