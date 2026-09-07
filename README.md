@@ -11,6 +11,7 @@
 * [시스템 아키텍처](#시스템-아키텍처)
 * [주요 설계 의사결정](#주요-설계-의사결정)
 * [트레이드오프 및 한계점](#트레이드오프-및-한계점)
+* [연동 지표 · 모니터링 설계](#연동-지표--모니터링-설계)
 * [실행 방법](#실행-방법)
 * [API 명세](#api-명세)
 * [프로젝트 구조](#프로젝트-구조)
@@ -35,6 +36,7 @@
 * [x] API 문서 자동화 — springdoc-openapi(Swagger UI)
 * [x] 단위 테스트 — 핵심 도메인 로직 및 값 객체 검증
 * [x] 성능/동시성 부하 테스트 — k6 기반 재현 가능한 스크립트
+* [x] 연동 지표 · 모니터링 설계 — Supplier별 성공률/응답 지연/타임아웃 비율 (설계)
 
 ## 기술 스택
 
@@ -132,6 +134,47 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 
 * **캐시 TTL의 staleness 비용 실측 불가**: 부하 테스트로 확인한 것은 캐시 히트율이며, 45초는 "더 늘려도 히트율 개선이 크지 않은 지점"의 근거임. 실제 데이터 변경 빈도와 허용 가능한 Staleness는 추가 검증이 필요
 * **배치 내부는 순차 처리**: 한 공급사가 50개를 초과하는 숙소를 보유할 경우 배치를 나누고 `concatMap`으로 순차 처리함. 현재 규모에서는 문제가 없지만, 숙소가 대량으로 증가하면 `flatMap + concurrency 제한`으로 변경 가능.
+
+## 연동 지표 · 모니터링 설계
+
+Supplier별 성공률·응답 지연·타임아웃 비율을 관찰하기 위한 설계. 별도 대시보드까지 구축하지는 않았고, 기존 resilience4j/Micrometer 조합을 최대한 활용하는 방향으로 설계함
+
+### 성공률 · 응답 지연 — 기존 구조로 대부분 확보
+
+`resilience4j-spring-boot3`는 `MeterRegistry` 빈이 있으면 `@CircuitBreaker`/`@Retry` 호출 결과를 자동으로 Micrometer 메트릭에 바인딩함. `bootstrap`에 이미 `spring-boot-starter-actuator`가 있어 `MeterRegistry` 빈은 떠 있으므로, 아래 두 가지만 추가하면 즉시 노출됨
+
+```kotlin
+// bootstrap/build.gradle.kts
+implementation("io.micrometer:micrometer-registry-prometheus")
+```
+
+```yaml
+# application.yml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, metrics, prometheus
+```
+
+`/actuator/prometheus`에서 공급사(`name` 태그: `supplierA`/`supplierB`)별로 아래 지표가 코드 추가 없이 노출됨
+
+| 지표 | 설명 |
+| --- | --- |
+| `resilience4j_circuitbreaker_calls_seconds_count{name, kind}` | 성공률(`successful / (successful + failed)`) 계산 |
+| `resilience4j_circuitbreaker_calls_seconds_sum{name, kind}` | 누적 응답 시간 → 평균/percentile 지연 계산 |
+| `resilience4j_retry_calls_total{name, kind}` | 재시도 없이 성공 / 재시도로 성공 / 최종 실패 건수 |
+
+### 타임아웃 비율 — 커스텀 Counter 필요
+
+resilience4j의 `kind` 태그는 성공/실패만 구분하고 타임아웃·5xx·4xx 비즈니스 실패를 구분하지 않음. `SupplierAClient`/`SupplierBClient`의 기존 에러 매핑 지점(`.onErrorMap`)에 실패 원인별 `Counter`를 추가하는 방식으로 설계
+
+타임아웃 비율 = `reason="timeout"` 건수 / 전체 실패 건수
+
+### 활용 방안
+
+Prometheus가 `/actuator/prometheus`를 스크래핑하고 Grafana로 시각화. 
+공급사별 성공률이 임계치 이하로 떨어지거나 타임아웃 비율이 급증하면 알림 기능 확장 가능
 
 ## 실행 방법
 
