@@ -63,10 +63,10 @@ public class MockSupplierController {
     @GetMapping("/a/v1/hotels")
     public HotelsResponseA hotelsA() {
         return new HotelsResponseA(List.of(
-                new HotelA("A-2001", "Harborview Suites", List.of(
-                        new RoomTypeA("DLX-KNG", "Deluxe King", 2))),
-                new HotelA("A-2002", "Cedar Peak Lodge", List.of(
-                        new RoomTypeA("STD-TWN", "Standard Twin", 2)))));
+                new HotelA("A-10023", "Riverside Hotel Seoul", List.of(
+                        new RoomTypeA("DLX-TWN", "Deluxe Twin", 2))),
+                new HotelA("A-10044", "Namsan Garden Stay", List.of(
+                        new RoomTypeA("STD-DBL", "Standard Double", 2)))));
     }
 
     @GetMapping("/a/v1/availability")
@@ -88,25 +88,25 @@ public class MockSupplierController {
     private AvailabilityResponseA normalAvailabilityResponseA() {
         return new AvailabilityResponseA(List.of(
                 new RoomOfferA(
-                        "A-2001", "Harborview Suites", "DLX-KNG", "Deluxe King", 2, false, "KRW",
+                        "A-10023", "Riverside Hotel Seoul", "DLX-TWN", "Deluxe Twin", 2, false, "KRW",
                         List.of(
-                                new DailyRateA("2026-09-01", 3, 130000, 13000),
+                                new DailyRateA("2026-09-01", 3, 120000, 12000),
                                 new DailyRateA("2026-09-02", 1, 150000, 15000),
-                                new DailyRateA("2026-09-03", 5, 130000, 13000))),
+                                new DailyRateA("2026-09-03", 5, 120000, 12000))),
                 new RoomOfferA(
-                        "A-2002", "Cedar Peak Lodge", "STD-TWN", "Standard Twin", 2, false, "KRW",
+                        "A-10044", "Namsan Garden Stay", "STD-DBL", "Standard Double", 2, false, "KRW",
                         List.of(
-                                new DailyRateA("2026-09-01", 2, 90000, 9000),
-                                new DailyRateA("2026-09-02", 0, 95000, 9500),
-                                new DailyRateA("2026-09-03", 4, 90000, 9000)))));
+                                new DailyRateA("2026-09-01", 2, 88000, 8800),
+                                new DailyRateA("2026-09-02", 0, 99000, 9900),
+                                new DailyRateA("2026-09-03", 4, 88000, 8800)))));
     }
 
     // Supplier B
     @GetMapping("/b/api/properties")
     public EnvelopeB<PropertiesDataB> propertiesB() {
         return EnvelopeB.success(new PropertiesDataB(List.of(
-                new PropertyB("B-9001", "Harborview Suites", List.of(
-                        new RoomB("RM-11", "Deluxe King Room", 2))))));
+                new PropertyB("B77120", "Riverside Hotel Seoul", List.of(
+                        new RoomB("R-401", "Deluxe Twin Room", 2))))));
     }
 
     @GetMapping("/b/api/search")
@@ -126,8 +126,8 @@ public class MockSupplierController {
     private SearchDataB normalSearchDataB() {
         return new SearchDataB(List.of(
                 new RoomOfferB(
-                        "B-9001", "Harborview Suites", "RM-11", "Deluxe King Room", 2, true, "KRW",
-                        447000, true,
+                        "B77120", "Riverside Hotel Seoul", "R-401", "Deluxe Twin Room", 2, true, "KRW",
+                        452000, true,
                         List.of(
                                 new InventoryB("2026-09-01", 3),
                                 new InventoryB("2026-09-02", 1),
