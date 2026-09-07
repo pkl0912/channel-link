@@ -1,8 +1,8 @@
 # channel-link
 
-여러 상품 공급사(Supplier)의 서로 다른 API를 하나의 **표준 모델로 통합**하여, 단일 검색 API로 노출하는 백엔드 서비스입니다.
+여러 상품 공급사(Supplier)의 서로 다른 API를 하나의 **표준 모델로 통합**하여, 단일 검색 API로 노출하는 백엔드 서비스
 
-설계 의사결정과 트레이드오프는 [`docs/JOURNAL.MD`](docs/JOURNAL.MD)에, AI 페어 프로그래밍 활용 내역은 [`docs/AI.md`](docs/AI.md)에 정리했습니다.
+설계 의사결정과 트레이드오프는 [`docs/JOURNAL.MD`](docs/JOURNAL.MD)에, AI 페어 프로그래밍 활용 내역은 [`docs/AI.md`](docs/AI.md)
 
 ## 목차
 
@@ -52,9 +52,9 @@
 
 ## 시스템 아키텍처
 
-헥사고날(Port & Adapter) 아키텍처를 멀티모듈로 구성했습니다.
+헥사고날(Port & Adapter) 아키텍처를 멀티모듈로 구성
 
-`domain`/`application` 모듈에는 Spring·JPA·WebClient 등 프레임워크 의존성을 두지 않아, 아키텍처 경계를 빌드 단계에서 강제합니다.
+`domain`/`application` 모듈에는 Spring·JPA·WebClient 등 프레임워크 의존성을 두지 않아, 아키텍처 경계를 빌드 단계에서 강제
 
 ### 모듈 별 설명
 
@@ -68,9 +68,9 @@
 
 ### 숙소 목록 갱신
 
-애플리케이션 기동 시 `CommandLineRunner`가 1회 실행됩니다.
+애플리케이션 기동 시 `CommandLineRunner`가 1회 실행됨
 
-`RefreshHotelCatalogService`가 등록된 모든 `SupplierPort`의 `fetchHotelCatalog()`를 호출하여 `HotelMapping`과 `RoomTypeMapping`을 생성합니다.
+`RefreshHotelCatalogService`가 등록된 모든 `SupplierPort`의 `fetchHotelCatalog()`를 호출하여 `HotelMapping`과 `RoomTypeMapping`을 생성
 
 ### 통합 검색
 
@@ -78,9 +78,9 @@
 
 ### 데이터 모델
 
-`HotelMapping`/`RoomTypeMapping`만 영속화하며, 요금과 재고는 매 검색 시 공급사에서 조회합니다.
+`HotelMapping`/`RoomTypeMapping`만 영속화하며, 요금과 재고는 매 검색 시 공급사에서 조회
 
-각 Mapping 테이블은 `(supplier_code, hotel_code[, room_type_code])`에 유니크 제약을 가지며, `internal_hotel_id`/`internal_room_type_id`를 PK로 사용합니다.
+각 Mapping 테이블은 `(supplier_code, hotel_code[, room_type_code])`에 유니크 제약을 가지며, `internal_hotel_id`/`internal_room_type_id`를 PK로 사용
 
 <img src="channel-erd.jpeg" alt="ERD" width="600">
 
@@ -88,50 +88,50 @@
 
 ### 1. 멀티모듈 + 헥사고날
 
-`domain`/`application`의 빌드 파일에 프레임워크 의존성을 원천 차단하여, 아키텍처 경계를 코드 리뷰가 아닌 **빌드 단계에서 강제**했습니다.
+`domain`/`application`의 빌드 파일에 프레임워크 의존성을 원천 차단하여, 아키텍처 경계를 코드 리뷰가 아닌 **빌드 단계에서 강제**
 
 ### 2. 매핑만 영속, 요금/재고는 라이브 조회
 
-숙소 목록은 변경 빈도가 낮아 매핑 정보만 저장하고, 요금/재고는 실시간성이 중요하므로 저장하지 않고 검색 시 공급사에서 조회합니다.
+숙소 목록은 변경 빈도가 낮아 매핑 정보만 저장하고, 요금/재고는 실시간성이 중요하므로 저장하지 않고 검색 시 공급사에서 조회
 
 ### 3. `SupplierCallException`으로 실패 통일
 
-Supplier A의 HTTP 상태 기반 실패와 Supplier B의 `HTTP 200 + resultCode` 기반 실패를 하나의 예외 타입으로 통일했습니다.
+Supplier A의 HTTP 상태 기반 실패와 Supplier B의 `HTTP 200 + resultCode` 기반 실패를 하나의 예외 타입으로 통일
 
-예외 내부에 `retryable` 여부를 담아 5xx·네트워크 오류만 재시도하도록 구성했습니다.
+예외 내부에 `retryable` 여부를 담아 5xx·네트워크 오류만 재시도하도록 구성
 
 ### 4. 레지스트리 패턴으로 공급사 확장
 
-`SupplierPort`/`ReactiveSupplierSearch` 구현체를 Spring이 `List<T>`로 자동 수집하도록 구성했습니다.
+`SupplierPort`/`ReactiveSupplierSearch` 구현체를 Spring이 `List<T>`로 자동 수집하도록 구성
 
-신규 공급사는 ENUM과 어댑터를 추가하는 것만으로 기존 검색 로직 수정 없이 확장할 수 있습니다(OCP).
+신규 공급사는 ENUM과 어댑터를 추가하는 것만으로 기존 검색 로직 수정 없이 확장(OCP).
 
 ### 5. 도메인은 동기, Adapter 내부는 리액티브
 
-`SupplierSearchPort`는 동기 인터페이스로 유지하고, 실제 Supplier 호출이 발생하는 `adapter-out-supplier` 내부에서만 `Flux.flatMap`을 사용하여 공급사를 병렬 호출합니다.
+`SupplierSearchPort`는 동기 인터페이스로 유지하고, 실제 Supplier 호출이 발생하는 `adapter-out-supplier` 내부에서만 `Flux.flatMap`을 사용하여 공급사를 병렬 호출
 
-리액티브 타입은 Adapter 외부로 노출하지 않습니다.
+리액티브 타입은 Adapter 외부로 노출하지 않음
 
 ### 6. 요금/재고 캐시
 
-Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 경우 진행 중인 Supplier 호출을 공유하고 캐시 스탬피드를 방지했습니다.
+Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 경우 진행 중인 Supplier 호출을 공유하고 캐시 스탬피드를 방지
 
-캐시 키는 `(supplierCode, 숙소 코드 배치, SearchCriteria)`로 구성했으며, TTL은 부하 테스트를 통해 **45초**로 설정했습니다.
+캐시 키는 `(supplierCode, 숙소 코드 배치, SearchCriteria)`로 구성, TTL은 부하 테스트를 통해 **45초**로 설정
 
 ### 7. Retry + CircuitBreaker
 
-`mock-supplier`의 `flaky` 모드를 활용하여 실패 확률을 조절하고 Retry 횟수별 성공률과 p99 지연시간을 비교했습니다.
+`mock-supplier`의 `flaky` 모드를 활용하여 실패 확률을 조절하고 Retry 횟수별 성공률과 p99 지연시간을 비교
 
-이를 바탕으로 `max-attempts=3`으로 설정했으며, Retry가 CircuitBreaker보다 바깥에서 동작하도록 구성했습니다.
+이를 바탕으로 `max-attempts=3`으로 설정했으며, Retry가 CircuitBreaker보다 바깥에서 동작하도록 구성
 
 ### 8. UUIDv7
 
-내부 식별자에 무작위 UUIDv4 대신 시간 정렬 특성을 가진 UUIDv7을 사용하여 B-tree 인덱스의 지역성을 고려했습니다.
+내부 식별자에 무작위 UUIDv4 대신 시간 정렬 특성을 가진 UUIDv7을 사용하여 B-tree 인덱스의 지역성을 고려
 
 ## 트레이드오프 및 한계점
 
-* **캐시 TTL의 staleness 비용 실측 불가**: 부하 테스트로 확인한 것은 캐시 히트율이며, 45초는 "더 늘려도 히트율 개선이 크지 않은 지점"의 근거입니다. 실제 데이터 변경 빈도와 허용 가능한 Staleness는 추가 검증이 필요합니다.
-* **배치 내부는 순차 처리**: 한 공급사가 50개를 초과하는 숙소를 보유할 경우 배치를 나누고 `concatMap`으로 순차 처리합니다. 현재 규모에서는 문제가 없지만, 숙소가 대량으로 증가하면 `flatMap + concurrency 제한`으로 변경할 수 있습니다.
+* **캐시 TTL의 staleness 비용 실측 불가**: 부하 테스트로 확인한 것은 캐시 히트율이며, 45초는 "더 늘려도 히트율 개선이 크지 않은 지점"의 근거임. 실제 데이터 변경 빈도와 허용 가능한 Staleness는 추가 검증이 필요
+* **배치 내부는 순차 처리**: 한 공급사가 50개를 초과하는 숙소를 보유할 경우 배치를 나누고 `concatMap`으로 순차 처리함. 현재 규모에서는 문제가 없지만, 숙소가 대량으로 증가하면 `flatMap + concurrency 제한`으로 변경 가능.
 
 ## 실행 방법
 
@@ -146,7 +146,7 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 ```
 
 * Port: `9090`
-* 실제 외부 공급사 API를 대신하여 정상 응답 및 장애 상황을 재현합니다.
+* 실제 외부 공급사 API를 대신하여 정상 응답 및 장애 상황을 재현
 
 ### 2. 애플리케이션 실행
 
@@ -155,7 +155,7 @@ Caffeine `AsyncCache`를 사용하여 동일한 요청이 동시에 들어올 �
 ```
 
 * Port: `8080`
-* 애플리케이션 기동 직후 숙소 목록 갱신이 1회 실행됩니다.
+* 애플리케이션 기동 직후 숙소 목록 갱신이 1회 실행
 
 ### 3. 검색 API 호출
 
@@ -172,11 +172,11 @@ curl 'http://localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026
 
 ## API 명세
 
-Swagger UI(`/swagger-ui/index.html`)가 최신 스펙의 기준입니다.
+Swagger UI(`/swagger-ui/index.html`)
 
 ### `GET /api/v1/stays/search`
 
-날짜·인원 조건으로 등록된 모든 공급사를 검색하여 하나의 표준 응답으로 반환합니다.
+날짜·인원 조건으로 등록된 모든 공급사를 검색하여 하나의 표준 응답으로 반환
 
 **Query Parameters**
 
@@ -201,6 +201,6 @@ channel-link
 └── mock-supplier
 ```
 
-각 모듈의 상세 역할은 [시스템 아키텍처](#시스템-아키텍처)를 참고합니다.
+각 모듈의 상세 역할은 [시스템 아키텍처](#시스템-아키텍처)를 참고
 
 

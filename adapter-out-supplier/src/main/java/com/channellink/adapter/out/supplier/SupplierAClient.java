@@ -49,7 +49,7 @@ public class SupplierAClient implements SupplierPort, ReactiveSupplierSearch {
 		return SupplierCode.SUPPLIER_A;
 	}
 
-	// Supplier A의 숙소 목록을 조회해서 표준 모델(Hotel/RoomType)로 변환
+	// Supplier A의 숙소 목록을 조회
 	@Override
 	public HotelCatalog fetchHotelCatalog() {
 		HotelsResponse response = callAndBlock(webClient.get()

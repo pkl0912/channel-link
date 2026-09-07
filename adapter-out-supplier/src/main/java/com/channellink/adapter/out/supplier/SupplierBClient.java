@@ -48,7 +48,7 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
         return SupplierCode.SUPPLIER_B;
     }
 
-    // Supplier B의 숙소 목록(①)을 조회해서 표준 모델(Hotel/RoomType)로 변환한다
+    // Supplier B의 숙소 목록을 조회
     @Override
     public HotelCatalog fetchHotelCatalog() {
         PropertiesData data = callAndUnwrap(webClient.get()
@@ -69,6 +69,7 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
         return new HotelCatalog(hotels, roomTypes);
     }
 
+    // Supplier B의 재고·요금을 조회
     @Override
     @CircuitBreaker(name = "supplierB", fallbackMethod = "availabilityFallback")
     @Retry(name = "supplierB", fallbackMethod = "availabilityFallback")
@@ -112,7 +113,7 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
         return Mono.error(new SupplierCallException(SupplierCode.SUPPLIER_B, "circuit open or retries exhausted: " + t.getMessage(), t, false));
     }
 
-    // B의 원본 응답(이미 세금 포함된 총액)을 표준 모델로 정규화한다
+    // B의 원본 응답을 표준 모델로 정규화
     private AvailabilityResult toAvailabilityResult(SearchData data) {
         List<DailyInventory> dailyInventories = new ArrayList<>();
         List<StayOffer> stayOffers = new ArrayList<>();
@@ -125,7 +126,7 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
                         LocalDate.parse(inventory.date()),
                         inventory.remainingRooms()));
             }
-            // totalPrice는 이미 세금 포함(gross)
+            // totalPrice는 이미 세금 포함
             stayOffers.add(new StayOffer(
                     SupplierCode.SUPPLIER_B,
                     item.propertyId(),
@@ -139,7 +140,7 @@ public class SupplierBClient implements SupplierPort, ReactiveSupplierSearch {
         return new AvailabilityResult(dailyInventories, stayOffers);
     }
 
-    // fetchHotelCatalog() 전용 — Mono를 동기로 풀고 HTTP 실패든 resultCode 실패든 SupplierCallException으로 통일한다
+    // resultCode를 열어보고 SupplierCallException으로 통일
     private <T> T callAndUnwrap(Mono<EnvelopeB<T>> mono) {
         EnvelopeB<T> envelope;
         try {

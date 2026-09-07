@@ -34,7 +34,6 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
 
     private final List<ReactiveSupplierSearch> reactiveSearches;
 
-    // AsyncCache - 캐시 스탬피드 방지
     private final AsyncCache<AvailabilityCacheKey, SupplierPort.AvailabilityResult> availabilityCache =
             Caffeine.newBuilder()
                     .expireAfterWrite(AVAILABILITY_CACHE_TTL)
@@ -42,7 +41,7 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
                     .recordStats()
                     .buildAsync();
 
-    // TTL/maximumSize 튜닝을 위한 부하 테스트 전용 — 히트율·eviction 수를 확인하는 용도
+    // 부하 테스트 전용
     public CacheStats availabilityCacheStats() {
         return availabilityCache.synchronous().stats();
     }
@@ -63,16 +62,16 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
             return Mono.just(new SupplierSearchOutcome(client.supplierCode(), List.of(), List.of(), false));
         }
 
-        // 배치 여러 개를 이 Supplier 안에서는 순차로 이어 붙인다 — 다른 Supplier와는 병렬
+        // 배치 여러 개를 이 Supplier 안에서는 순차로 이어 붙인다
         return Flux.fromIterable(partition(hotelCodes, MAX_HOTEL_CODES_PER_CALL))
                 .concatMap(batch -> searchBatchCached(client, batch, criteria))
                 .collectList()
                 .map(batchResults -> merge(client.supplierCode(), batchResults))
-                .onErrorResume(SupplierCallException.class,
+                .onErrorResume(SupplierCallException.class, //실패 시 실패한 공급사로 반환
                         e -> Mono.just(new SupplierSearchOutcome(client.supplierCode(), List.of(), List.of(), true)));
     }
 
-    // 캐시 요청
+    // 재고·요금 캐시 요청
     private Mono<SupplierPort.AvailabilityResult> searchBatchCached(
             ReactiveSupplierSearch client, List<String> batch, SearchCriteria criteria) {
         AvailabilityCacheKey key = new AvailabilityCacheKey(client.supplierCode(), batch, criteria);
@@ -101,7 +100,7 @@ public class SupplierSearchPortAdapter implements SupplierSearchPort {
         return result;
     }
 
-    // 요금/재고 캐시 키
+    // 재고·요금 캐시 키
     private record AvailabilityCacheKey(SupplierCode supplierCode, List<String> hotelCodes, SearchCriteria criteria) {
     }
 }
