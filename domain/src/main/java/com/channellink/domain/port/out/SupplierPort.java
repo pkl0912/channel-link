@@ -12,10 +12,9 @@ import java.util.List;
 
 public interface SupplierPort {
 
-    // 이 어댑터가 담당하는 공급사가 어디인지
     SupplierCode supplierCode();
 
-    /** 숙소 목록 */
+    // 숙소 갱신
     HotelCatalog fetchHotelCatalog();
 
     record HotelCatalog(

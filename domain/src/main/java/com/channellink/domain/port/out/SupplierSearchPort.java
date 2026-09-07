@@ -10,7 +10,6 @@ import java.util.Map;
 
 public interface SupplierSearchPort {
 
-    // 공급사별 숙소 코드 목록을 받아 모든 공급사를 동시에 조회하고, 성공/실패를 한데 모아 반환한다
     List<SupplierSearchOutcome> searchAll(Map<SupplierCode, List<String>> hotelCodesBySupplier, SearchCriteria criteria);
 
     record SupplierSearchOutcome(
